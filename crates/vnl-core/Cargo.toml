@@ -1,0 +1,17 @@
+[package]
+name = "vnl-core"
+description = "Shared domain types, paths, events and process specs for VN Launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+directories.workspace = true
+shlex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

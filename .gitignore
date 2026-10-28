@@ -1,0 +1,11 @@
+/target
+/node_modules
+/dist
+/src-tauri/target
+/src-tauri/gen/schemas
+*.log
+.vnl-dev/
+/packaging/**/build/
+/packaging/**/*.AppImage
+/packaging/arch/pkg/
+/packaging/arch/src/

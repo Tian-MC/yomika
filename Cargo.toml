@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/vnl-core",
+    "crates/vnl-runtime",
+    "crates/vnl-library",
+    "crates/vnl-translate",
+    "crates/vnl-graphics",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "LicenseRef-TBD"
+repository = "https://example.invalid/vn-launcher"
+
+[workspace.dependencies]
+vnl-core = { path = "crates/vnl-core" }
+vnl-runtime = { path = "crates/vnl-runtime" }
+vnl-library = { path = "crates/vnl-library" }
+vnl-translate = { path = "crates/vnl-translate" }
+vnl-graphics = { path = "crates/vnl-graphics" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-util", "fs"] }
+directories = "6"
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"
+which = "7"
+shlex = "1"
+nix = { version = "0.29", features = ["signal", "process"] }
+async-trait = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"

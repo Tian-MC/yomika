@@ -1,0 +1,4 @@
+# Shared formatting config. Code in this workspace is written for a 120-column width.
+edition = "2024"
+max_width = 120
+use_small_heuristics = "Max"

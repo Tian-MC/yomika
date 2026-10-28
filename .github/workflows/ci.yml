@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # Debug info is not needed in CI and makes the cache much bigger.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file pkg-config \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-24.04-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  frontend:
+    name: Frontend (typecheck, lint, vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+      - name: typecheck
+        run: npm run typecheck
+      - name: eslint
+        run: npm run lint
+      - name: vitest
+        run: npm test
+      - name: vite build
+        run: npm run build
+
+  tauri-build:
+    name: Tauri release build (deb smoke)
+    needs: [rust, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file pkg-config \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-24.04-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: tauri build --bundles deb
+        run: npm run tauri -- build --ci --bundles deb
+
+      - name: Inspect package
+        run: |
+          deb=$(ls target/release/bundle/deb/*.deb)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ github.sha }}
+          path: target/release/bundle/deb/*.deb
+          retention-days: 7
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux (cargo test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install packages
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust nodejs npm pkgconf \
+            webkit2gtk-4.1 gtk3 libsoup3 librsvg openssl
+
+      - uses: actions/checkout@v7
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: archlinux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+      - name: Validate PKGBUILD metadata
+        run: |
+          useradd -m builder
+          chown -R builder: packaging/arch
+          su builder -c 'cd packaging/arch && bash -n PKGBUILD && makepkg --printsrcinfo | diff -u .SRCINFO -'
+
+  hygiene:
+    name: Scripts, workflows, metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils appstream
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+      - name: desktop-file-validate
+        run: desktop-file-validate packaging/linux/*.desktop
+
+      - name: appstreamcli validate
+        run: appstreamcli validate --no-net --explain packaging/linux/*.metainfo.xml
+
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        checks: [advisories, bans licenses sources]
+    # New RustSec advisories appear independently of our changes: don't block PRs on them.
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}

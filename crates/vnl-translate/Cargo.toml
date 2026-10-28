@@ -18,7 +18,16 @@ uuid.workspace = true
 async-trait.workspace = true
 rusqlite.workspace = true
 which.workspace = true
+base64 = "0.22"
+url = "2"
+futures-util = "0.3"
+# xdg-desktop-portal Screenshot (same zbus major as the Secret Service store).
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+# Secret Service (gnome-keyring / KWallet / KeePassXC) for API keys.
+keyring-core = "1"
+zbus-secret-service-keyring-store = { version = "1", features = ["rt-tokio-crypto-rust"] }
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+wiremock = "0.6"

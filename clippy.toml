@@ -1,0 +1,9 @@
+# Clippy configuration. MSRV is taken from `workspace.package.rust-version`.
+# Tauri command handlers and process builders legitimately take many parameters.
+too-many-arguments-threshold = 10
+# unwrap/expect/panic/indexing are fine in #[test] code even if restriction lints get enabled later.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true

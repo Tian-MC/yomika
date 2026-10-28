@@ -20,7 +20,7 @@ export interface ImportScan {
   suggestedTitle: string;
   /** The scanned path itself looks like an installer (setup.exe, *.msi...). */
   isInstaller: boolean;
-  /** Set when a game with this exe is already in the library. */
+  /** Set when a game with one of the candidate exes is already in the library. */
   existingGameId: GameId | null;
 }
 
@@ -64,20 +64,28 @@ export interface SaveLocation {
   reason: string | null;
 }
 
+/** "manual" = requested by the user, "safety" = taken automatically before a restore. */
+export type SaveBackupKind = "manual" | "safety";
+
 export interface SaveBackup {
   id: number;
   gameId: GameId;
   createdAt: number;
   label: string | null;
+  kind: SaveBackupKind;
+  /** Total uncompressed size of the backed-up files. */
   sizeBytes: number;
+  fileCount: number;
   archivePath: string;
   sourcePaths: string[];
 }
 
 export interface RestoreResult {
   restored: SaveBackup;
-  /** Backup of the current saves taken automatically before restoring. */
+  /** Backup of the current saves taken automatically before restoring (null when there was nothing to back up). */
   safetyBackup: SaveBackup | null;
+  /** Files written back. Restore overwrites files from the backup and never deletes newer files. */
+  filesRestored: number;
 }
 
 export interface LibraryCommands {
@@ -88,7 +96,7 @@ export interface LibraryCommands {
   library_import_game: { args: { request: ImportRequest }; result: Game };
   /** Replaces user-editable fields (title, paths, args, status, favorite, metadata, notes). */
   library_update_game: { args: { game: Game }; result: Game };
-  /** Removes the DB entry only — never touches game files or prefixes. */
+  /** Removes the DB entry only — never touches game files, prefixes or backup archives. */
   library_remove_game: { args: { id: GameId }; result: null };
   library_get_settings: { args: { gameId: GameId }; result: GameSettings };
   library_save_settings: { args: { gameId: GameId; settings: GameSettings }; result: GameSettings };
@@ -97,13 +105,16 @@ export interface LibraryCommands {
   settings_get_app: { args: Record<string, never>; result: AppSettings };
   settings_save_app: { args: { settings: AppSettings }; result: AppSettings };
 
+  /** Fails with code "unsupported" when VNDB is disabled in AppSettings, "network" when offline/throttled. */
   vndb_search: { args: { query: string }; result: VndbSearchResult[] };
   /** Fetch full metadata + cover for vndbId and store it on the game. */
   vndb_apply: { args: { gameId: GameId; vndbId: string }; result: Game };
 
   saves_detect: { args: { gameId: GameId }; result: SaveLocation[] };
+  /** Replaces the manual locations; returns manual + freshly detected locations. */
   saves_set_locations: { args: { gameId: GameId; paths: string[] }; result: SaveLocation[] };
   saves_list_backups: { args: { gameId: GameId }; result: SaveBackup[] };
+  /** Uses manual locations when set, otherwise detected ones; "notFound" when no save folder is known. */
   saves_create_backup: { args: { gameId: GameId; label?: string | null }; result: SaveBackup };
   /** Fails with code "confirmationRequired" unless confirm === true. */
   saves_restore_backup: { args: { backupId: number; confirm: boolean }; result: RestoreResult };

@@ -1,0 +1,198 @@
+{
+ "more": false,
+ "results": [
+  {
+   "aliases": [
+    "Ever 17",
+    "Ebaa Sebuntiin",
+    "エバー・セブンティーン",
+    "E17"
+   ],
+   "alttitle": null,
+   "description": "Ever17 is the tale of seven individuals who become trapped 51 meters below the surface in the underwater marine theme park 'LeMU'. After an incident, almost half of LeMU becomes flooded, and the path to the surface and the communication lines are cut off. In addition, LeMU is under constant assault by severe water pressure, limiting time to find a means of escape to 119 hours. Escape is not the only concern, however; many questions arise as to the legitimacy of the accident and whether or not those trapped there were brought there for a purpose.\n\n[From [url=http://en.wikipedia.org/wiki/Ever_17:_The_Out_of_Infinity]Wikipedia[/url]]\n\n[spoiler]Kid is actually the third viewpoint.[/spoiler] Visit [url=/c123]Tsugumi[/url] and [b]enjoy[/b].\n\n[From [url=http://en.wikipedia.org/wiki/Ever_17]Wikipedia[/url]]",
+   "developers": [
+    {
+     "id": "p8",
+     "name": "KID",
+     "original": "キッド"
+    },
+    {
+     "id": "p19579",
+     "name": "SDR Project",
+     "original": null
+    }
+   ],
+   "id": "v17",
+   "image": {
+    "sexual": 0,
+    "url": "https://t.vndb.org/cv/12/79412.jpg"
+   },
+   "length": 4,
+   "length_minutes": 1984,
+   "olang": "ja",
+   "rating": 84.5,
+   "released": "2002-08-29",
+   "tags": [
+    {
+     "category": "cont",
+     "id": "g2380",
+     "lie": false,
+     "name": "Time Jump",
+     "rating": 3,
+     "spoiler": 2
+    },
+    {
+     "category": "cont",
+     "id": "g3452",
+     "lie": false,
+     "name": "Non-Chronological",
+     "rating": 3,
+     "spoiler": 2
+    },
+    {
+     "category": "cont",
+     "id": "g2243",
+     "lie": false,
+     "name": "Observer Protagonist",
+     "rating": 3,
+     "spoiler": 2
+    },
+    {
+     "category": "cont",
+     "id": "g293",
+     "lie": false,
+     "name": "Confinement",
+     "rating": 2.98850584030151,
+     "spoiler": 0
+    },
+    {
+     "category": "tech",
+     "id": "g181",
+     "lie": false,
+     "name": "One True End",
+     "rating": 2.90476179122925,
+     "spoiler": 1
+    },
+    {
+     "category": "tech",
+     "id": "g553",
+     "lie": false,
+     "name": "Multiple Route Mystery",
+     "rating": 2.85964918136597,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g152",
+     "lie": false,
+     "name": "Amnesia",
+     "rating": 2.84090900421143,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g133",
+     "lie": false,
+     "name": "Male Protagonist",
+     "rating": 2.82666659355164,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g3301",
+     "lie": false,
+     "name": "Underwater",
+     "rating": 2.81818175315857,
+     "spoiler": 0
+    },
+    {
+     "category": "tech",
+     "id": "g32",
+     "lie": false,
+     "name": "ADV",
+     "rating": 2.81578946113586,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g1366",
+     "lie": false,
+     "name": "Reunion",
+     "rating": 2.7428572177887,
+     "spoiler": 2
+    },
+    {
+     "category": "tech",
+     "id": "g136",
+     "lie": false,
+     "name": "Multiple Protagonists",
+     "rating": 2.73929834365845,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g19",
+     "lie": false,
+     "name": "Mystery",
+     "rating": 2.73179268836975,
+     "spoiler": 0
+    },
+    {
+     "category": "cont",
+     "id": "g9",
+     "lie": false,
+     "name": "Identity Crisis",
+     "rating": 2.72222232818604,
+     "spoiler": 1
+    },
+    {
+     "category": "ero",
+     "id": "g3247",
+     "lie": false,
+     "name": "Off Screen Sex Only",
+     "rating": 2.22222232818604,
+     "spoiler": 2
+    },
+    {
+     "category": "cont",
+     "id": "g999999",
+     "lie": true,
+     "name": "A Lie Tag",
+     "rating": 3,
+     "spoiler": 2
+    }
+   ],
+   "title": "Ever17 -the out of infinity-",
+   "titles": [
+    {
+     "lang": "en",
+     "latin": null,
+     "main": false,
+     "official": true,
+     "title": "Ever17 -out of infinity-"
+    },
+    {
+     "lang": "ja",
+     "latin": null,
+     "main": true,
+     "official": true,
+     "title": "Ever17 -the out of infinity-"
+    },
+    {
+     "lang": "zh-Hans",
+     "latin": "Shikong Lunhui",
+     "main": false,
+     "official": true,
+     "title": "时空轮回"
+    },
+    {
+     "lang": "zh-Hant",
+     "latin": "Shiguang de Jiban",
+     "main": false,
+     "official": true,
+     "title": "時光的羈絆"
+    }
+   ]
+  }
+ ]
+}

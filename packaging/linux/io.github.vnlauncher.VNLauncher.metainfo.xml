@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata: https://www.freedesktop.org/software/appstream/docs/ -->
+<component type="desktop-application">
+  <id>io.github.vnlauncher.VNLauncher</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- The project license is not decided yet; update this (and Cargo/PKGBUILD) once chosen. -->
+  <project_license>LicenseRef-TBD</project_license>
+
+  <name>VN Launcher</name>
+  <summary>Linux-first launcher for visual novels</summary>
+  <developer id="io.github.vnlauncher">
+    <name>VN Launcher contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      VN Launcher organises a visual novel library and runs Windows titles through Wine, Proton
+      or umu-launcher with per-game prefixes, locale and runtime settings.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Library with VNDB metadata, playtime tracking and save backups</li>
+      <li>Per-game Wine/Proton runner, prefix, Japanese locale and environment settings</li>
+      <li>Optional gamescope integration and Wine FSR upscaling</li>
+      <li>Text extraction via hooking, clipboard or OCR, with local (Ollama) or online translation</li>
+    </ul>
+    <p>
+      Wine, Proton, gamescope, Tesseract and Ollama are optional external programs and are not bundled.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.vnlauncher.VNLauncher.desktop</launchable>
+  <provides>
+    <binary>vn-launcher</binary>
+  </provides>
+
+  <url type="homepage">https://example.invalid/vn-launcher</url>
+  <url type="bugtracker">https://example.invalid/vn-launcher/issues</url>
+
+  <categories>
+    <category>Game</category>
+  </categories>
+  <keywords>
+    <keyword>visual novel</keyword>
+    <keyword>wine</keyword>
+    <keyword>proton</keyword>
+    <keyword>translation</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">960</display_length>
+  </requires>
+
+  <!-- TODO: add real screenshots before publishing (required by Flathub). -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>Game library</caption>
+      <image>https://example.invalid/vn-launcher/screenshots/library.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-28" type="development">
+      <description>
+        <p>Initial development snapshot.</p>
+      </description>
+    </release>
+  </releases>
+</component>

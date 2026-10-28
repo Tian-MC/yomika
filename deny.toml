@@ -1,0 +1,73 @@
+# cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
+# Run: cargo deny check            (install: cargo install --locked cargo-deny)
+
+[graph]
+# The app is Linux-first; only evaluate crates that can be built for these targets.
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+# RustSec advisory DB. Unmaintained-crate advisories are reported only for crates the workspace
+# depends on directly: Tauri/wry pull the unmaintained gtk-rs GTK3 0.18 bindings (atk, gdk, gtk,
+# ... RUSTSEC-2024-0411..0420) which we cannot replace until Tauri moves to GTK4.
+# Vulnerabilities are always reported. Add `{ id = "RUSTSEC-...", reason = "..." }` to ignore.
+unmaintained = "workspace"
+yanked = "warn"
+ignore = []
+
+[licenses]
+# Permissive licenses plus MPL-2.0 (file-level weak copyleft: cssparser/selectors via
+# Tauri, option-ext via directories). Copyleft (GPL/AGPL/LGPL) is NOT allowed in linked
+# code; see docs/LICENSES.md before adding anything here.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+# Workspace crates marked `publish = false` are skipped entirely (then `exceptions` is unused).
+private = { ignore = true }
+# Until the project license is chosen the workspace uses `LicenseRef-TBD`.
+# Replace these with the chosen SPDX id (and drop the exceptions) once decided.
+exceptions = [
+    { crate = "vnl-app", allow = ["LicenseRef-TBD"] },
+    { crate = "vnl-core", allow = ["LicenseRef-TBD"] },
+    { crate = "vnl-runtime", allow = ["LicenseRef-TBD"] },
+    { crate = "vnl-library", allow = ["LicenseRef-TBD"] },
+    { crate = "vnl-translate", allow = ["LicenseRef-TBD"] },
+    { crate = "vnl-graphics", allow = ["LicenseRef-TBD"] },
+]
+
+[bans]
+multiple-versions = "allow" # Tauri's dependency tree legitimately contains duplicates.
+# Internal path deps must also carry `version = "..."` in [workspace.dependencies]
+# (or the crates must be `publish = false`) for this to pass.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # reqwest uses rustls-tls; keep the OpenSSL/native-tls stack out of the binary.
+    { crate = "openssl-sys", reason = "use rustls (reqwest feature rustls-tls)" },
+    { crate = "native-tls", reason = "use rustls (reqwest feature rustls-tls)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,0 +1,117 @@
+# Maintainer: VN Launcher contributors <https://example.invalid/vn-launcher>
+#
+# VCS package built from git. For a local build of the committed HEAD of a
+# checkout run `make arch-pkg` from the repository root, which sets
+# VNL_REPO=file://<checkout>. After editing this file run `make arch-srcinfo`.
+
+pkgname=vn-launcher-git
+_pkgname=vn-launcher
+_appid=io.github.vnlauncher.VNLauncher
+pkgver=0.1.0.r1.gf97cb60
+pkgrel=1
+pkgdesc='Linux-first visual novel launcher (Wine/Proton/umu, text hooking, translation)'
+arch=('x86_64' 'aarch64')
+url='https://example.invalid/vn-launcher'
+# The project license is not decided yet (workspace uses LicenseRef-TBD). Update with the SPDX id.
+license=('LicenseRef-TBD')
+depends=(
+  'cairo'
+  'gcc-libs'
+  'gdk-pixbuf2'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup3'
+  'pango'
+  'webkit2gtk-4.1'
+)
+makedepends=(
+  'cargo'
+  'git'
+  'nodejs'
+  'npm'
+)
+optdepends=(
+  'wine: run Windows games with the system Wine'
+  'umu-launcher: run games with Proton outside Steam (recommended runner)'
+  'winetricks: install runtime components (vcrun, d3dx9, fonts) into prefixes'
+  'gamescope: nested compositor with fixed resolution and FSR/NIS upscaling'
+  'tesseract: OCR text extraction'
+  'tesseract-data-jpn: Japanese language data for OCR'
+  'ollama: local LLM translation backend'
+  'imagemagick: screenshot preprocessing for OCR'
+  'wl-clipboard: clipboard text source on Wayland'
+  'xclip: clipboard text source on X11'
+  'noto-fonts-cjk: Japanese/CJK fonts'
+  'lib32-vulkan-icd-loader: 32-bit Vulkan for DXVK in 32-bit games (also install the lib32 driver: lib32-mesa, lib32-vulkan-radeon or lib32-nvidia-utils)'
+)
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+# Rust handles its own LTO (profile.release lto = "thin"); makepkg's C LTO flags only slow down cc-rs builds.
+options=('!lto')
+source=("${_pkgname}::git+${VNL_REPO:-https://example.invalid/vn-launcher.git}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  local ver
+  ver="$(git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g')"
+  if [[ -z $ver ]]; then
+    # No tags yet: <Cargo version>.r<commits>.g<hash>
+    local base
+    base="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+    ver="$(printf '%s.r%s.g%s' "${base:-0.0.0}" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)")"
+  fi
+  printf '%s\n' "$ver"
+}
+
+prepare() {
+  cd "${_pkgname}"
+  export npm_config_cache="${srcdir}/npm-cache"
+  export RUSTUP_TOOLCHAIN=stable
+  npm ci --no-audit --no-fund
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "${_pkgname}"
+  export npm_config_cache="${srcdir}/npm-cache"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # `tauri build` runs `npm run build` (beforeBuildCommand), then `cargo build --release`
+  # with the `custom-protocol` feature that embeds dist/. Args after `--` go to cargo.
+  npm run tauri -- build --no-bundle --ci -- --frozen
+}
+
+check() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --workspace --release
+}
+
+package() {
+  cd "${_pkgname}"
+  install -Dm755 target/release/vn-launcher "${pkgdir}/usr/bin/vn-launcher"
+
+  install -Dm644 "packaging/linux/${_appid}.desktop" "${pkgdir}/usr/share/applications/${_appid}.desktop"
+  install -Dm644 "packaging/linux/${_appid}.metainfo.xml" "${pkgdir}/usr/share/metainfo/${_appid}.metainfo.xml"
+
+  local size src
+  for size in 32 64 128 256 512; do
+    case $size in
+      256) src="src-tauri/icons/128x128@2x.png" ;;
+      512) src="src-tauri/icons/icon.png" ;;
+      *) src="src-tauri/icons/${size}x${size}.png" ;;
+    esac
+    install -Dm644 "$src" "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/${_appid}.png"
+  done
+
+  if [[ -f README.md ]]; then
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  fi
+  if [[ -f LICENSE ]]; then
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  fi
+}

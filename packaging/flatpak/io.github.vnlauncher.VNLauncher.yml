@@ -1,0 +1,78 @@
+# Flatpak manifest for VN Launcher. See packaging/flatpak/README.md (building, generated
+# sources) and docs/FLATPAK.md (sandbox limitations, host execution, security notes).
+#
+# GNOME 51 (freedesktop-sdk 26.08) is the newest runtime that still ships WebKitGTK 4.1
+# (webkit2gtk-4.1); it was removed from gnome-build-meta master on 2026-09-28, so GNOME 52+
+# will need WebKitGTK 4.1 built as a module here (or Tauri moving to WebKitGTK 6 / GTK 4).
+id: io.github.vnlauncher.VNLauncher
+runtime: org.gnome.Platform
+runtime-version: "51"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
+command: vn-launcher
+
+finish-args:
+  # Display: Wayland with X11 fallback; GPU for WebKitGTK compositing.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # VNDB metadata, online translation providers, local Ollama (localhost).
+  - --share=network
+  # Games run on the HOST through `flatpak-spawn --host` (Wine/Proton/umu/gamescope are host
+  # programs). This permission is a full sandbox escape; see docs/FLATPAK.md.
+  - --talk-name=org.freedesktop.Flatpak
+  # Host processes need real paths: document-portal paths (/run/user/*/doc/...) do not exist
+  # outside the sandbox, so game folders must be reachable by their host path.
+  - --filesystem=home
+  # Steam installs and Proton builds (native and Flatpak Steam), read-only.
+  - --filesystem=~/.steam:ro
+  - --filesystem=~/.var/app/com.valvesoftware.Steam/.local/share/Steam:ro
+  # Desktop notifications when a session ends / a task finishes.
+  - --talk-name=org.freedesktop.Notifications
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
+  env:
+    CARGO_HOME: /run/build/vn-launcher/cargo
+    CARGO_NET_OFFLINE: "true"
+    npm_config_offline: "true"
+    npm_config_cache: /run/build/vn-launcher/flatpak-node/npm-cache
+    npm_config_nodedir: /usr/lib/sdk/node24
+    XDG_CACHE_HOME: /run/build/vn-launcher/flatpak-node/cache
+
+modules:
+  - name: vn-launcher
+    buildsystem: simple
+    build-commands:
+      # Frontend deps from the offline npm cache (node-sources.json).
+      - npm ci --offline --no-audit --no-fund
+      # `tauri build` runs `npm run build` (vite) and then `cargo build --release` with the
+      # custom-protocol feature; extra args after `--` are passed to cargo.
+      - npm run tauri -- build --no-bundle --ci -- --offline
+      - install -Dm755 target/release/vn-launcher /app/bin/vn-launcher
+      - install -Dm644 packaging/linux/${FLATPAK_ID}.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 packaging/linux/${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/64x64.png /app/share/icons/hicolor/64x64/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+    sources:
+      # Local checkout for development builds. For Flathub replace with:
+      #   - type: git
+      #     url: https://example.invalid/vn-launcher.git
+      #     tag: v0.1.0
+      #     commit: <full sha>
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - node_modules
+          - dist
+          - .vnl-dev
+      # Generated with flatpak-builder-tools (see README.md); not committed until release.
+      - cargo-sources.json
+      - node-sources.json

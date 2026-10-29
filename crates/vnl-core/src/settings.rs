@@ -248,7 +248,7 @@ pub struct CaptureRegion {
     pub height: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OcrConfig {
     /// OCR backend id, e.g. `"tesseract"`, `"ollama"`.
@@ -256,12 +256,6 @@ pub struct OcrConfig {
     pub region: Option<CaptureRegion>,
     /// Automatic capture interval; 0 = manual capture only.
     pub interval_ms: u64,
-}
-
-impl Default for OcrConfig {
-    fn default() -> Self {
-        Self { backend: None, region: None, interval_ms: 0 }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

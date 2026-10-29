@@ -75,10 +75,22 @@ pub async fn gamescope_inspect_path(path: String) -> Result<GamescopeBinary, App
 /// progress arrives as `vnl://task` events; output as `gamescope-build` logs.
 #[tauri::command]
 pub async fn gamescope_build_start(state: State<'_, AppState>) -> Result<String, AppError> {
+    let app = state.app.clone();
     let builder = state.gamescope_builder.clone();
-    tauri::async_runtime::spawn_blocking(move || builder.start(BuildOptions::default()))
-        .await
-        .map_err(|e| AppError::internal("background task failed").with_details(e.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        if state.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::invalid("The launcher is shutting down"));
+        }
+        let result = builder.start(BuildOptions::default());
+        if state.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            builder.cancel();
+        }
+        result
+    })
+    .await
+    .map_err(|e| AppError::internal("background task failed").with_details(e.to_string()))?
 }
 
 #[tauri::command]

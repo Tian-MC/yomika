@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1-alpha.1"
 edition = "2024"
 rust-version = "1.90"
 license = "LicenseRef-TBD"
@@ -18,11 +18,11 @@ publish = false
 repository = "https://github.com/Tian-MC/yomika"
 
 [workspace.dependencies]
-vnl-core = { path = "crates/vnl-core", version = "0.1.0" }
-vnl-runtime = { path = "crates/vnl-runtime", version = "0.1.0" }
-vnl-library = { path = "crates/vnl-library", version = "0.1.0" }
-vnl-translate = { path = "crates/vnl-translate", version = "0.1.0" }
-vnl-graphics = { path = "crates/vnl-graphics", version = "0.1.0" }
+vnl-core = { path = "crates/vnl-core", version = "0.1.1-alpha.1" }
+vnl-runtime = { path = "crates/vnl-runtime", version = "0.1.1-alpha.1" }
+vnl-library = { path = "crates/vnl-library", version = "0.1.1-alpha.1" }
+vnl-translate = { path = "crates/vnl-translate", version = "0.1.1-alpha.1" }
+vnl-graphics = { path = "crates/vnl-graphics", version = "0.1.1-alpha.1" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

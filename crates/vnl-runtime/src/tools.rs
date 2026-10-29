@@ -35,6 +35,19 @@ fn require_wine_runner(runner: &Runner) -> Result<(), AppError> {
 }
 
 impl RuntimeService {
+    async fn run_helper(
+        &self,
+        spec: &CommandSpec,
+        source: &str,
+        target: &OutputTarget,
+        timeout: Duration,
+    ) -> Result<std::process::ExitStatus, AppError> {
+        let (child, group) = self.tools.spawn(spec, self.flatpak)?;
+        let result = process::wait_to_completion(child, source, target, timeout).await;
+        tokio::spawn(group.finish());
+        result
+    }
+
     fn target(&self) -> OutputTarget {
         OutputTarget { sink: self.events.clone(), session_id: None, file: None }
     }
@@ -74,9 +87,9 @@ impl RuntimeService {
         let spec =
             self.helper_command(Path::new("wineboot"), &["-u".into()], runner, prefix, ProtonVerb::Run, false)?;
         let target = self.target();
-        let status = process::run_to_completion(&spec, self.flatpak, "prefix.init", &target, INIT_TIMEOUT).await?;
+        let status = self.run_helper(&spec, "prefix.init", &target, INIT_TIMEOUT).await?;
         if let Some(ws) = command::wineserver_command(runner, prefix, "-w") {
-            let _ = process::run_to_completion(&ws, self.flatpak, "prefix.init", &target, INIT_TIMEOUT).await;
+            let _ = self.run_helper(&ws, "prefix.init", &target, INIT_TIMEOUT).await;
         }
         if !prefixes::is_initialized(prefix) {
             return Err(AppError::new(ErrorCode::Process, "prefix initialisation failed (no drive_c)")
@@ -161,7 +174,7 @@ impl RuntimeService {
                 let spec = command::wineserver_command(&runner, &prefix, "-k").ok_or_else(|| {
                     AppError::new(ErrorCode::MissingDependency, format!("no wineserver found for {}", runner.name))
                 })?;
-                process::run_to_completion(&spec, self.flatpak, &source, &target, Duration::from_secs(30)).await?;
+                self.run_helper(&spec, &source, &target, Duration::from_secs(30)).await?;
                 return Ok(());
             }
             PrefixTool::Winecfg | PrefixTool::Regedit | PrefixTool::Explorer => {
@@ -177,7 +190,7 @@ impl RuntimeService {
             }
         };
 
-        let mut child = process::spawn_group(&spec, self.flatpak)?;
+        let (mut child, group) = self.tools.spawn(&spec, self.flatpak)?;
         let pumps = process::capture_single(&mut child, &source, &target);
         target.log(LogLevel::Info, &source, format!("started: {}", spec.preview()));
         let is_tricks = request.tool == PrefixTool::Winetricks;
@@ -192,6 +205,7 @@ impl RuntimeService {
             for p in pumps {
                 let _ = tokio::time::timeout(Duration::from_secs(1), p).await;
             }
+            group.finish().await;
             let ok = status.as_ref().is_ok_and(|s| s.success());
             let msg = match &status {
                 Ok(s) => format!("exited with {s}"),
@@ -269,9 +283,9 @@ impl RuntimeService {
             let target = service.target();
             // Installers can run for a long time (and may launch the game at the end).
             let long = Duration::from_secs(6 * 3600);
-            let result = process::run_to_completion(&spec, service.flatpak, "installer", &target, long).await;
+            let result = service.run_helper(&spec, "installer", &target, long).await;
             if let Some(ws) = wait {
-                let _ = process::run_to_completion(&ws, service.flatpak, "installer", &target, long).await;
+                let _ = service.run_helper(&ws, "installer", &target, long).await;
             }
             match result {
                 Ok(status) if status.success() => service.task(&task_id, &label, TaskState::Done, None),

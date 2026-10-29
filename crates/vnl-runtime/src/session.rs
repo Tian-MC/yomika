@@ -15,7 +15,8 @@ use std::time::Duration;
 use nix::sys::signal::Signal;
 use tokio::sync::watch;
 use vnl_core::{
-    AppError, AppEvent, AuxProcessInfo, AuxProgram, CommandSpec, EventSink, LogLevel, SessionInfo, SessionState,
+    AppError, AppEvent, AuxProcessInfo, AuxProgram, CommandSpec, EventSink, LogLevel, PrefixKind, SessionInfo,
+    SessionState,
 };
 
 use crate::LaunchRequest;
@@ -38,13 +39,14 @@ pub(crate) struct SessionManager {
     flatpak: bool,
     grace: Duration,
     sessions: Mutex<Vec<Arc<Session>>>,
+    shutting_down: Mutex<bool>,
 }
 
 const MAX_FINISHED_KEPT: usize = 50;
 
 impl SessionManager {
     pub fn new(sink: Arc<dyn EventSink>, logs_dir: PathBuf, flatpak: bool, grace: Duration) -> Self {
-        Self { sink, logs_dir, flatpak, grace, sessions: Mutex::new(Vec::new()) }
+        Self { sink, logs_dir, flatpak, grace, sessions: Mutex::new(Vec::new()), shutting_down: Mutex::new(false) }
     }
 
     pub fn list(&self) -> Vec<SessionInfo> {
@@ -79,7 +81,35 @@ impl SessionManager {
         Some(session.snapshot())
     }
 
+    pub async fn shutdown(&self) {
+        let sessions = {
+            let mut shutting_down = self.shutting_down.lock().unwrap();
+            *shutting_down = true;
+            self.sessions.lock().unwrap().clone()
+        };
+        // Cancel delayed aux starts before waiting for any one game to stop.
+        for session in &sessions {
+            session.stop.send_replace(true);
+        }
+        let mut tasks = tokio::task::JoinSet::new();
+        for session in sessions {
+            tasks.spawn(async move {
+                if let Err(e) = session.stop(false).await {
+                    session.log(LogLevel::Warn, "runtime", format!("shutdown: {e}"));
+                }
+                // Even helpers configured to outlive their game belong to the app.
+                session.cleanup(true).await;
+                session.stop_owned_wineserver().await;
+            });
+        }
+        while tasks.join_next().await.is_some() {}
+    }
+
     pub fn start(&self, setup: SessionSetup) -> Result<SessionInfo, AppError> {
+        let shutting_down = self.shutting_down.lock().unwrap();
+        if *shutting_down {
+            return Err(AppError::invalid("The launcher is shutting down"));
+        }
         let SessionSetup { request, wineserver_wait, wineserver_kill, wineprefix } = setup;
         let id = uuid::Uuid::new_v4().to_string();
         let started_at = vnl_core::now_secs();
@@ -135,6 +165,8 @@ impl SessionManager {
             wait_for_wineserver: request.config.wait_for_wineserver,
             wineserver_wait,
             wineserver_kill,
+            owns_prefix: request.prefix.managed
+                && matches!(request.prefix.kind, PrefixKind::Dedicated { game_id } if game_id == request.game_id),
             wineprefix,
             log_path,
         });
@@ -142,7 +174,7 @@ impl SessionManager {
             let mut list = self.sessions.lock().unwrap();
             let finished = list.iter().filter(|s| s.is_finished()).count();
             if finished >= MAX_FINISHED_KEPT
-                && let Some(pos) = list.iter().position(|s| s.is_finished())
+                && let Some(pos) = list.iter().position(|s| s.is_finished() && s.aux_groups.lock().unwrap().is_empty())
             {
                 list.remove(pos);
             }
@@ -236,6 +268,7 @@ pub(crate) struct Session {
     wait_for_wineserver: bool,
     wineserver_wait: Option<CommandSpec>,
     wineserver_kill: Option<CommandSpec>,
+    owns_prefix: bool,
     wineprefix: Option<PathBuf>,
     log_path: Option<PathBuf>,
 }
@@ -292,8 +325,17 @@ impl Session {
         let session = self.clone();
         tokio::spawn(async move {
             let status = child.wait().await;
-            for p in pumps {
-                let _ = tokio::time::timeout(Duration::from_secs(1), p).await;
+            for mut p in pumps {
+                if tokio::time::timeout(Duration::from_secs(1), &mut p).await.is_err() {
+                    p.abort();
+                    let _ = p.await;
+                }
+            }
+            session.log(LogLevel::Info, &source, format!("leader exited: {}", describe(&status)));
+            // A wrapper may exit before the actual companion. Keep its group
+            // registered until all descendants exit or game cleanup stops it.
+            while process::group_alive(pgid) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
             session.companion_groups.lock().unwrap().retain(|g| *g != pgid);
             session.log(LogLevel::Info, &source, format!("exited: {}", describe(&status)));
@@ -301,8 +343,8 @@ impl Session {
     }
 
     pub fn start_aux(self: &Arc<Self>, aux_id: &str) -> Result<SessionInfo, AppError> {
-        if self.is_finished() {
-            return Err(AppError::invalid("The game session has already ended"));
+        if self.is_finished() || *self.stop.borrow() || *self.game_exited.borrow() {
+            return Err(AppError::invalid("The game session is stopping or has already ended"));
         }
         let (program, spec) = self
             .aux_defs
@@ -313,6 +355,9 @@ impl Session {
         let source = format!("aux.{aux_id}");
         let (mut child, pgid) = {
             let mut groups = self.aux_groups.lock().unwrap();
+            if *self.stop.borrow() || *self.game_exited.borrow() {
+                return Err(AppError::invalid("The game session is stopping or has already ended"));
+            }
             if groups.contains_key(aux_id) {
                 return Err(AppError::invalid(format!("{} is already running", program.name)));
             }
@@ -336,8 +381,14 @@ impl Session {
         let aux_id = aux_id.to_string();
         tokio::spawn(async move {
             let status = child.wait().await;
-            for p in pumps {
-                let _ = tokio::time::timeout(Duration::from_secs(1), p).await;
+            for mut p in pumps {
+                if tokio::time::timeout(Duration::from_secs(1), &mut p).await.is_err() {
+                    p.abort();
+                    let _ = p.await;
+                }
+            }
+            while process::group_alive(pgid) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
             {
                 let mut groups = session.aux_groups.lock().unwrap();
@@ -360,9 +411,12 @@ impl Session {
     async fn monitor(self: Arc<Self>, mut child: tokio::process::Child, pumps: Vec<tokio::task::JoinHandle<()>>) {
         let status = child.wait().await;
         self.game_exited.send_replace(true);
-        for p in pumps {
+        for mut p in pumps {
             // A grandchild may keep the pipe open; don't block on it.
-            let _ = tokio::time::timeout(Duration::from_millis(500), p).await;
+            if tokio::time::timeout(Duration::from_millis(500), &mut p).await.is_err() {
+                p.abort();
+                let _ = p.await;
+            }
         }
         self.log(LogLevel::Info, "runtime", format!("game process exited: {}", describe(&status)));
 
@@ -371,7 +425,14 @@ impl Session {
             self.wait_wine_idle().await;
         }
 
-        self.cleanup().await;
+        // Wine launchers may exit before the real game, so only clean the
+        // game group after the prefix has become idle (or stop was requested).
+        let pgid = self.game_pgid.lock().unwrap().take();
+        if let Some(pgid) = pgid {
+            process::terminate_group(pgid, self.grace).await;
+        }
+        self.cleanup(false).await;
+        self.stop_owned_wineserver().await;
 
         let stopped = *self.stop.borrow();
         let (state, exit_code, error) = match &status {
@@ -433,15 +494,35 @@ impl Session {
         }
     }
 
+    /// Reap persistent Wine infrastructure only for this game's own managed
+    /// prefix, and only when no user application is left. Never kill a shared
+    /// or external prefix's wineserver automatically.
+    async fn stop_owned_wineserver(&self) {
+        if !self.owns_prefix || self.flatpak {
+            return;
+        }
+        let Some(prefix) = &self.wineprefix else { return };
+        if !process::wine_user_processes(prefix, &HashSet::new()).is_empty() {
+            return;
+        }
+        if let Some(spec) = &self.wineserver_kill
+            && let Err(e) =
+                process::run_to_completion(spec, self.flatpak, "wineserver", &self.target, Duration::from_secs(15))
+                    .await
+        {
+            self.log(LogLevel::Warn, "runtime", format!("prefix cleanup: {e}"));
+        }
+    }
+
     /// Stop companions and `stop_with_game` aux programs.
-    async fn cleanup(&self) {
+    async fn cleanup(&self, all_aux: bool) {
         let mut groups: Vec<i32> = std::mem::take(&mut *self.companion_groups.lock().unwrap());
         {
             let aux = self.aux_groups.lock().unwrap();
             for (id, pgid) in aux.iter() {
                 let stop_with_game =
                     self.aux_defs.iter().find(|(p, _)| &p.id == id).is_none_or(|(p, _)| p.stop_with_game);
-                if stop_with_game {
+                if all_aux || stop_with_game {
                     groups.push(*pgid);
                 }
             }

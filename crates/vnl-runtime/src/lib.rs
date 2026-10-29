@@ -142,6 +142,7 @@ pub struct RuntimeService {
     custom_lock: Mutex<()>,
     prefixes: PrefixRegistry,
     sessions: SessionManager,
+    tools: Arc<process::ManagedGroups>,
 }
 
 impl RuntimeService {
@@ -169,6 +170,7 @@ impl RuntimeService {
             custom_lock: Mutex::new(()),
             prefixes,
             sessions,
+            tools: Arc::new(process::ManagedGroups::default()),
         })
     }
 
@@ -437,6 +439,11 @@ impl RuntimeService {
             )
         };
         self.sessions.start(SessionSetup { request, wineserver_wait, wineserver_kill, wineprefix })
+    }
+
+    /// Stop all sessions and their helpers, rejecting subsequent launches.
+    pub async fn shutdown(&self) {
+        tokio::join!(self.sessions.shutdown(), self.tools.shutdown());
     }
 
     pub async fn stop_session(&self, session_id: &str, force: bool) -> Result<(), AppError> {

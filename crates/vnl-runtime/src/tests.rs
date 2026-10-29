@@ -684,3 +684,159 @@ async fn real_proton_aux_runinprefix() {
         let _ = ws.to_std_command().status();
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_game_cleans_remaining_children() {
+    let f = fixture();
+    let pid_file = f.root.join("child.pid");
+    let exit_file = f.root.join("exit");
+    let req = native_request(
+        &f,
+        &format!(
+            "sleep 30 & echo $! > '{}'; while [ ! -e '{}' ]; do sleep 0.02; done",
+            pid_file.display(),
+            exit_file.display()
+        ),
+    );
+    let info = f.svc.start_session(req).await.unwrap();
+    let pid = read_pid(&pid_file).await;
+    assert!(pid_alive(pid));
+    std::fs::write(exit_file, "exit").unwrap();
+    let done = f.svc.wait_session(&info.id, Duration::from_secs(10)).await.unwrap();
+    assert_eq!(done.state, SessionState::Exited);
+    assert!(!pid_alive(pid), "game child survived natural game closure");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_companion_wrapper_cleans_its_children() {
+    let f = fixture();
+    let pid_file = f.root.join("companion-child.pid");
+    let mut req = native_request(&f, "sleep 30");
+    req.companions = vec![sh(&format!("sleep 30 >/dev/null 2>&1 & echo $! > '{}'", pid_file.display()))];
+    let info = f.svc.start_session(req).await.unwrap();
+    let pid = read_pid(&pid_file).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !f.sink.events().iter().any(|e| matches!(e, AppEvent::Log(log) if log.source.starts_with("companion.") && log.message.starts_with("leader exited:"))) {
+        assert!(Instant::now() < deadline, "companion wrapper did not exit");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(pid_alive(pid));
+    // The wrapper may have exited long before the game. Its child's group must
+    // still be owned when closing the game, rather than being forgotten.
+    f.svc.stop_session(&info.id, false).await.unwrap();
+    assert!(!pid_alive(pid), "companion child was forgotten after its wrapper exited");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_stops_all_owned_processes_and_rejects_new_launches() {
+    let f = fixture();
+    let aux_pid_file = f.root.join("aux.pid");
+    let companion_pid_file = f.root.join("companion.pid");
+    let mut req = native_request(&f, "sleep 30");
+    req.aux = vec![(
+        aux("persistent", true, 0, false),
+        sh(&format!("echo $$ > '{}'; exec sleep 30", aux_pid_file.display())),
+    )];
+    req.companions = vec![sh(&format!("echo $$ > '{}'; exec sleep 30", companion_pid_file.display()))];
+    let info = f.svc.start_session(req).await.unwrap();
+    let aux_pid = read_pid(&aux_pid_file).await;
+    let companion_pid = read_pid(&companion_pid_file).await;
+    // A separate application/process must not be affected by launcher shutdown.
+    let mut unrelated = process::spawn_group(&sh("exec sleep 30"), false).unwrap();
+    let unrelated_pid = unrelated.id().unwrap() as i32;
+    f.svc.shutdown().await;
+    f.svc.shutdown().await;
+    let done = f.svc.session(&info.id).unwrap();
+    let unrelated_alive = pid_alive(unrelated_pid);
+    process::terminate_group(unrelated_pid, Duration::from_millis(100)).await;
+    let _ = unrelated.wait().await;
+    assert!(done.state.is_finished());
+    assert!(!pid_alive(info.pid.unwrap() as i32));
+    assert!(!pid_alive(aux_pid));
+    assert!(!pid_alive(companion_pid));
+    assert!(unrelated_alive, "shutdown touched an unrelated process");
+    assert!(f.svc.start_session(native_request(&f, "sleep 30")).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_also_stops_helpers_of_already_finished_sessions() {
+    let f = fixture();
+    let pid_file = f.root.join("persistent.pid");
+    let exit_file = f.root.join("exit");
+    let mut req = native_request(&f, &format!("while [ ! -e '{}' ]; do sleep 0.02; done", exit_file.display()));
+    req.aux =
+        vec![(aux("persistent", true, 0, false), sh(&format!("echo $$ > '{}'; exec sleep 30", pid_file.display())))];
+    let info = f.svc.start_session(req).await.unwrap();
+    let pid = read_pid(&pid_file).await;
+    std::fs::write(exit_file, "exit").unwrap();
+    let done = f.svc.wait_session(&info.id, Duration::from_secs(10)).await.unwrap();
+    assert!(done.state.is_finished());
+    assert!(pid_alive(pid), "helper configured to outlive the game must survive normal game closure");
+    f.svc.shutdown().await;
+    assert!(!pid_alive(pid), "helper must stop when the application closes");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_game_is_not_blocked_by_a_translation_host_in_its_prefix() {
+    let f = fixture();
+    let pfx = f.root.join("translation-prefix");
+    std::fs::create_dir_all(&pfx).unwrap();
+    let mut helper = process::spawn_group(
+        &sh("exec sleep 30").env("WINEPREFIX", pfx.to_string_lossy()).env(process::TRANSLATION_HELPER_ENV, "1"),
+        false,
+    )
+    .unwrap();
+    let helper_pid = helper.id().unwrap() as i32;
+    let mut req = native_request(&f, "true");
+    req.config.wait_for_wineserver = true;
+    let info = f
+        .svc
+        .sessions
+        .start(session::SessionSetup {
+            request: req,
+            wineserver_wait: None,
+            wineserver_kill: None,
+            wineprefix: Some(pfx),
+        })
+        .unwrap();
+    let done = f.svc.wait_session(&info.id, Duration::from_secs(6)).await.unwrap();
+    let helper_alive = pid_alive(helper_pid);
+    process::terminate_group(helper_pid, Duration::from_millis(100)).await;
+    let _ = helper.wait().await;
+    assert!(done.state.is_finished(), "hook host kept the finished game session alive");
+    assert!(helper_alive, "runtime must leave hook cleanup to the translation service");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_game_reaps_only_its_own_idle_managed_wineserver() {
+    for (owned, busy) in [(false, false), (true, false), (true, true)] {
+        let f = fixture();
+        let marker = f.root.join("wineserver-stopped");
+        let pfx = f.root.join("pfx");
+        std::fs::create_dir_all(&pfx).unwrap();
+        let mut other = busy.then(|| {
+            process::spawn_group(&sh("exec sleep 30").env("WINEPREFIX", pfx.to_string_lossy()), false).unwrap()
+        });
+        let mut req = native_request(&f, "true");
+        req.config.wait_for_wineserver = false;
+        req.prefix.managed = owned;
+        req.prefix.kind = if owned { PrefixKind::Dedicated { game_id: req.game_id } } else { PrefixKind::External };
+        let info = f
+            .svc
+            .sessions
+            .start(session::SessionSetup {
+                request: req,
+                wineserver_wait: None,
+                wineserver_kill: Some(sh(&format!("touch '{}'", marker.display()))),
+                wineprefix: Some(pfx),
+            })
+            .unwrap();
+        let done = f.svc.wait_session(&info.id, Duration::from_secs(6)).await.unwrap();
+        if let Some(child) = &mut other {
+            process::terminate_group(child.id().unwrap() as i32, Duration::from_millis(100)).await;
+            let _ = child.wait().await;
+        }
+        assert!(done.state.is_finished());
+        assert_eq!(marker.exists(), owned && !busy, "automatic wineserver cleanup must respect prefix ownership");
+    }
+}

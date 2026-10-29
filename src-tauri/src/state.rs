@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::AppHandle;
 use vnl_core::{AppError, AppPaths, EventSink, LogEntry, LogLevel};
@@ -14,6 +15,8 @@ use crate::sink::TauriSink;
 /// `tauri::State<'_, AppState>`.
 pub struct AppState {
     pub app: AppHandle,
+    pub shutting_down: AtomicBool,
+    pub shutdown_complete: AtomicBool,
     pub paths: AppPaths,
     pub sink: Arc<TauriSink>,
     pub library: Arc<Library>,
@@ -24,6 +27,33 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Called once from the main-window close or application exit handler.
+    pub fn begin_shutdown(app: &AppHandle) {
+        use tauri::Manager;
+        let state = app.state::<Self>();
+        if state.shutting_down.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        state.gamescope_builder.cancel();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<Self>();
+            // Stop extraction first: hook hosts sharing the game's Wine prefix
+            // must not keep wineserver/proton alive while game cleanup waits.
+            state.translation.shutdown().await;
+            state.runtime.shutdown().await;
+            // Give the existing build controller time to escalate cancellation
+            // and reap its command before the event loop/runtime goes away.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while state.gamescope_builder.status().running && std::time::Instant::now() < deadline {
+                state.gamescope_builder.cancel();
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            state.shutdown_complete.store(true, Ordering::SeqCst);
+            app.exit(0);
+        });
+    }
+
     pub fn init(app: AppHandle) -> Result<Self, AppError> {
         let paths = AppPaths::from_env()?;
         paths.ensure()?;
@@ -55,6 +85,17 @@ impl AppState {
             }));
         }
 
-        Ok(Self { app, paths, sink, library, runtime, graphics, gamescope_builder, translation })
+        Ok(Self {
+            app,
+            paths,
+            sink,
+            library,
+            runtime,
+            graphics,
+            gamescope_builder,
+            translation,
+            shutting_down: AtomicBool::new(false),
+            shutdown_complete: AtomicBool::new(false),
+        })
     }
 }

@@ -53,7 +53,10 @@ struct SessionPrefixBuilder {
 
 impl PrefixCommandBuilder for SessionPrefixBuilder {
     fn build(&self, exe: &Path, args: &[String], cwd: Option<&Path>) -> Result<CommandSpec, AppError> {
-        self.runtime.build_prefix_command(exe, args, cwd, &self.config, &self.runner, &self.prefix)
+        Ok(self
+            .runtime
+            .build_prefix_command(exe, args, cwd, &self.config, &self.runner, &self.prefix)?
+            .env(vnl_runtime::process::TRANSLATION_HELPER_ENV, "1"))
     }
 
     fn prefix_path(&self) -> PathBuf {
@@ -63,6 +66,9 @@ impl PrefixCommandBuilder for SessionPrefixBuilder {
 
 #[tauri::command]
 pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Result<SessionInfo, AppError> {
+    if state.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(AppError::invalid("The launcher is shutting down"));
+    }
     if let Some(running) = state.runtime.sessions().into_iter().find(|s| s.game_id == game_id && !s.state.is_finished())
     {
         return Err(AppError::invalid("This game is already running").with_details(format!("session {}", running.id)));
@@ -114,14 +120,19 @@ pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Resu
 /// Waits for gamescope's nested Xwayland display (from the session log) and
 /// switches a windowed game to fullscreen. See `vnl_graphics::fullscreen`.
 fn spawn_fullscreen_assist(runtime: Arc<RuntimeService>, sink: Arc<TauriSink>, session_id: String) {
-    use vnl_graphics::fullscreen::{FullscreenOutcome, ensure_game_fullscreen, parse_xwayland_display};
+    use vnl_graphics::fullscreen::{FullscreenOutcome, ensure_game_fullscreen_while, parse_xwayland_display};
 
     tauri::async_runtime::spawn_blocking(move || {
         let log =
             |level, message: String| sink.log(LogEntry::new(level, "graphics", message).session(session_id.clone()));
         let started = Instant::now();
+        let keep_running = || {
+            runtime
+                .session(&session_id)
+                .is_some_and(|s| matches!(s.state, vnl_core::SessionState::Starting | vnl_core::SessionState::Running))
+        };
         let display = loop {
-            if runtime.session(&session_id).is_none_or(|s| s.state.is_finished()) {
+            if !keep_running() {
                 return;
             }
             let found =
@@ -136,7 +147,7 @@ fn spawn_fullscreen_assist(runtime: Arc<RuntimeService>, sink: Arc<TauriSink>, s
             std::thread::sleep(Duration::from_millis(250));
         };
         // Generous timeout: the first launch of a new prefix can take a while.
-        match ensure_game_fullscreen(&display, Duration::from_secs(180)) {
+        match ensure_game_fullscreen_while(&display, Duration::from_secs(180), keep_running) {
             Ok(FullscreenOutcome::Switched) => {
                 log(LogLevel::Info, format!("fullscreen assist: switched the game to fullscreen (display {display})"))
             }

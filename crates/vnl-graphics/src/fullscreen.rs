@@ -141,9 +141,21 @@ impl Display {
 /// Blocking: wait up to `timeout` for the game window on `display`, then make
 /// sure it is fullscreen (see module docs). Sends at most one Alt+Enter.
 pub fn ensure_game_fullscreen(display: &str, timeout: Duration) -> Result<FullscreenOutcome, AppError> {
+    ensure_game_fullscreen_while(display, timeout, || true)
+}
+
+/// As above, but stops waiting as soon as the owning game is stopping/finished.
+pub fn ensure_game_fullscreen_while(
+    display: &str,
+    timeout: Duration,
+    keep_running: impl Fn() -> bool,
+) -> Result<FullscreenOutcome, AppError> {
     let deadline = Instant::now() + timeout;
     // Xwayland starts slightly after gamescope logs its display.
     let x = loop {
+        if !keep_running() {
+            return Ok(FullscreenOutcome::NoWindow);
+        }
         match Display::connect(display) {
             Ok(x) => break x,
             Err(e) if Instant::now() >= deadline => return Err(e),
@@ -154,7 +166,7 @@ pub fn ensure_game_fullscreen(display: &str, timeout: Duration) -> Result<Fullsc
 
     let mut stable: Option<(Window, WindowGeometry, Instant)> = None;
     let (window, geometry) = loop {
-        if Instant::now() >= deadline {
+        if !keep_running() || Instant::now() >= deadline {
             return Ok(FullscreenOutcome::NoWindow);
         }
         match pick_game_window(&x.top_level_windows()?) {
@@ -174,11 +186,14 @@ pub fn ensure_game_fullscreen(display: &str, timeout: Duration) -> Result<Fullsc
     if covers(geometry, root) {
         return Ok(FullscreenOutcome::AlreadyFullscreen);
     }
+    if !keep_running() {
+        return Ok(FullscreenOutcome::NoWindow);
+    }
     x.send_alt_enter()?;
 
     let verify_until = Instant::now() + VERIFY;
     let mut last = geometry;
-    while Instant::now() < verify_until {
+    while keep_running() && Instant::now() < verify_until {
         std::thread::sleep(POLL);
         // The engine may recreate its window when switching modes.
         let current = pick_game_window(&x.top_level_windows()?).map(|(_, g)| g).or_else(|| x.geometry(window).ok());
@@ -195,6 +210,14 @@ pub fn ensure_game_fullscreen(display: &str, timeout: Duration) -> Result<Fullsc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_fullscreen_assist_does_not_connect_or_wait() {
+        assert_eq!(
+            ensure_game_fullscreen_while(":invalid", Duration::from_secs(180), || false).unwrap(),
+            FullscreenOutcome::NoWindow
+        );
+    }
 
     fn g(x: i16, y: i16, width: u16, height: u16) -> WindowGeometry {
         WindowGeometry { x, y, width, height }

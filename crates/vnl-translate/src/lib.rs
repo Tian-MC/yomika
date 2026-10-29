@@ -30,6 +30,7 @@ pub mod types;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vnl_core::{
@@ -102,6 +103,7 @@ pub struct TranslationService {
     sources: Arc<dyn SourceFactory>,
     // Entries survive stop so a delayed launch cannot resurrect a finished game.
     sessions: Mutex<HashMap<SessionId, SessionEntry>>,
+    shutting_down: AtomicBool,
     /// Status of the last start attempt, kept after failures/stops.
     last_status: Mutex<HashMap<SessionId, TranslationSessionStatus>>,
 }
@@ -125,6 +127,7 @@ impl TranslationService {
             registry,
             sources,
             sessions: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
             last_status: Mutex::new(HashMap::new()),
         })
     }
@@ -183,6 +186,9 @@ impl TranslationService {
         let _done = InitializationDone(done_tx);
         let cancelled = {
             let mut sessions = self.sessions.lock().unwrap();
+            if self.shutting_down.load(Ordering::SeqCst) {
+                return Err(AppError::invalid("The launcher is shutting down"));
+            }
             if let Some(entry) = sessions.get(&session_id) {
                 return if entry.cancelled.is_cancelled() {
                     Ok(())
@@ -277,6 +283,20 @@ impl TranslationService {
             self.last_status.lock().unwrap().insert(session_id, stopped);
         }
         result
+    }
+
+    pub async fn shutdown(&self) {
+        let ids = {
+            let sessions = self.sessions.lock().unwrap();
+            self.shutting_down.store(true, Ordering::SeqCst);
+            for entry in sessions.values() {
+                entry.cancelled.cancel();
+            }
+            sessions.keys().cloned().collect::<Vec<_>>()
+        };
+        for id in ids {
+            self.stop_session(&id).await;
+        }
     }
 
     pub async fn stop_session(&self, session_id: &str) {

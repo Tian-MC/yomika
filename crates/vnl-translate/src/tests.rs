@@ -536,3 +536,27 @@ async fn initialization_error_cleans_all_failed_sources() {
     assert_eq!(factory.hook.stops.load(Ordering::SeqCst), 1);
     assert_eq!(factory.ocr.stops.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn shutdown_cancels_initializing_sources_and_blocks_new_sessions() {
+    let gate = Arc::new(StartGate::default());
+    let factory = Arc::new(GatedFactory {
+        hook: Arc::new(GatedSource::new(None, false)),
+        ocr: Arc::new(GatedSource::new(Some(gate.clone()), false)),
+        ocr_gate: None,
+    });
+    let (_tmp, svc) = gated_service(factory.clone());
+    let starting = {
+        let svc = svc.clone();
+        tokio::spawn(async move { svc.start_session(ctx(ExtractionMode::HookAndOcr, true)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), gate.entered.notified()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), svc.shutdown()).await.unwrap();
+    svc.shutdown().await;
+    starting.await.unwrap().unwrap();
+    assert!(!factory.hook.active.load(Ordering::SeqCst));
+    assert!(!factory.ocr.active.load(Ordering::SeqCst));
+    let mut other = ctx(ExtractionMode::Hook, true);
+    other.session_id = "s2".into();
+    assert!(svc.start_session(other).await.is_err());
+}

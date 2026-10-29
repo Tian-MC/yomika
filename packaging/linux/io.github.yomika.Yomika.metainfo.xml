@@ -60,6 +60,9 @@
   <!-- Add real screenshots before submission to Flathub. -->
 
   <releases>
+    <release version="0.1.1-alpha.1" date="2026-10-29" type="development">
+      <description><p>Fix application shutdown and cleanup of game processes, companions and translation hosts.</p></description>
+    </release>
     <release version="0.1.0" date="2026-10-28" type="development">
       <description>
         <p>Initial development snapshot.</p>

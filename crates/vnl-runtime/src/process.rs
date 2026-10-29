@@ -18,6 +18,10 @@ use vnl_core::{AppError, CommandSpec, ErrorCode, EventSink, LogEntry, LogLevel};
 
 use crate::command::finalize_for_spawn;
 
+/// Shared with the Tauri prefix-command bridge: hook hosts must not count as
+/// the game when deciding whether a Wine prefix is still busy.
+pub const TRANSLATION_HELPER_ENV: &str = "VNL_TRANSLATION_HELPER";
+
 pub type LogFile = Arc<Mutex<std::fs::File>>;
 
 /// Spawn `spec` (after the Flatpak transform) as the leader of a NEW process
@@ -32,12 +36,68 @@ pub fn spawn_group(spec: &CommandSpec, flatpak: bool) -> Result<Child, AppError>
     for key in ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "PYTHONEXECUTABLE"] {
         cmd.env_remove(key);
     }
-    cmd.process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
+    cmd.process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     cmd.spawn().map_err(|e| {
         let code =
             if e.kind() == std::io::ErrorKind::NotFound { ErrorCode::MissingDependency } else { ErrorCode::Process };
         AppError::new(code, format!("failed to start {}: {e}", spec.program.display())).with_details(spec.preview())
     })
+}
+
+/// Tracks prefix tools/installers independently of game sessions. Registration
+/// and shutdown share a lock so no helper can appear after the shutdown snapshot.
+#[derive(Default)]
+pub(crate) struct ManagedGroups {
+    state: Mutex<(bool, HashSet<i32>)>,
+}
+
+impl ManagedGroups {
+    pub fn spawn(self: &Arc<Self>, spec: &CommandSpec, flatpak: bool) -> Result<(Child, ManagedGroup), AppError> {
+        let mut state = self.state.lock().unwrap();
+        if state.0 {
+            return Err(AppError::invalid("The launcher is shutting down"));
+        }
+        let child = spawn_group(spec, flatpak)?;
+        let pgid = child.id().ok_or_else(|| AppError::internal("missing child PID"))? as i32;
+        state.1.insert(pgid);
+        Ok((child, ManagedGroup { owner: self.clone(), pgid }))
+    }
+
+    pub async fn shutdown(&self) {
+        let groups = {
+            let mut state = self.state.lock().unwrap();
+            state.0 = true;
+            state.1.iter().copied().collect::<Vec<_>>()
+        };
+        let mut tasks = tokio::task::JoinSet::new();
+        for pgid in groups {
+            tasks.spawn(terminate_group(pgid, Duration::from_secs(2)));
+        }
+        while tasks.join_next().await.is_some() {}
+    }
+}
+
+pub(crate) struct ManagedGroup {
+    owner: Arc<ManagedGroups>,
+    pgid: i32,
+}
+
+impl ManagedGroup {
+    pub async fn finish(self) {
+        // Tools can intentionally launch another process and return. Keep
+        // ownership until that group exits naturally or shutdown terminates it.
+        while group_alive(self.pgid) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        // Drop removes the registration and provides a final kill fallback.
+    }
+}
+
+impl Drop for ManagedGroup {
+    fn drop(&mut self) {
+        kill_tree(self.pgid, &[]);
+        self.owner.state.lock().unwrap().1.remove(&self.pgid);
+    }
 }
 
 /// Where captured output goes.
@@ -208,6 +268,15 @@ pub async fn terminate_group(pgid: i32, grace: Duration) -> bool {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     kill_tree(pgid, &tree);
+    // SIGKILL delivery is asynchronous. Do not report cleanup complete while
+    // a child is still runnable (the session monitor may reap it just after us).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        if !group_alive(pgid) && tree.iter().all(|p| !pid_alive(*p)) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     true
 }
 
@@ -270,6 +339,7 @@ pub fn wine_user_processes(wineprefix: &Path, exclude_groups: &HashSet<i32>) -> 
                 .map(|v| crate::prefixes::canonical(&PathBuf::from(v)) == want)
                 .unwrap_or(false)
         })
+        .filter(|p| proc_env_var(p.pid, TRANSLATION_HELPER_ENV).as_deref() != Some(std::ffi::OsStr::new("1")))
         .filter(|p| argv0_basename(p.pid).is_some_and(|n| !WINE_SYSTEM_PROCESSES.contains(&n.as_str())))
         .map(|p| p.pid)
         .collect()
@@ -284,7 +354,16 @@ pub async fn run_to_completion(
     target: &OutputTarget,
     timeout: Duration,
 ) -> Result<std::process::ExitStatus, AppError> {
-    let mut child = spawn_group(spec, flatpak)?;
+    let child = spawn_group(spec, flatpak)?;
+    wait_to_completion(child, source, target, timeout).await
+}
+
+pub(crate) async fn wait_to_completion(
+    mut child: Child,
+    source: &str,
+    target: &OutputTarget,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus, AppError> {
     let pgid = child.id().map(|p| p as i32);
     let pumps = capture_single(&mut child, source, target);
     let result = match tokio::time::timeout(timeout, child.wait()).await {
@@ -371,7 +450,32 @@ mod tests {
         assert_eq!(wine_user_processes(&pfx, &HashSet::new()), vec![pid]);
         assert!(wine_user_processes(&pfx, &HashSet::from([pid])).is_empty());
         assert!(wine_user_processes(tmp.path(), &HashSet::new()).is_empty());
+        let mut helper = spawn_group(&spec.env(TRANSLATION_HELPER_ENV, "1"), false).unwrap();
+        let helper_pid = helper.id().unwrap() as i32;
+        assert!(!wine_user_processes(&pfx, &HashSet::new()).contains(&helper_pid));
+        send_group(helper_pid, Signal::SIGKILL);
+        let _ = helper.wait().await;
         send_group(pid, Signal::SIGKILL);
         let _ = child.wait().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn managed_helpers_stop_on_shutdown_and_on_cancelled_owner() {
+        let groups = Arc::new(ManagedGroups::default());
+        let spec = CommandSpec::new("/bin/sh").args(["-c", "exec sleep 30"]);
+        let (mut child, registration) = groups.spawn(&spec, false).unwrap();
+        let pid = child.id().unwrap() as i32;
+        groups.shutdown().await;
+        let _ = child.wait().await;
+        assert!(!pid_alive(pid));
+        assert!(groups.spawn(&spec, false).is_err());
+        drop(registration);
+
+        let groups = Arc::new(ManagedGroups::default());
+        let (mut child, registration) = groups.spawn(&spec, false).unwrap();
+        let pid = child.id().unwrap() as i32;
+        drop(registration); // cancelled task/future must not detach its process
+        let _ = child.wait().await;
+        assert!(!pid_alive(pid));
     }
 }

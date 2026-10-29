@@ -96,8 +96,24 @@ pub fn run() {
             commands::translation::overlay_show,
             commands::translation::overlay_hide,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Yomika");
+        .build(tauri::generate_context!())
+        .expect("error while building Yomika")
+        .run(|app, event| match event {
+            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. }
+                if label == "main" =>
+            {
+                // Closing the main window must also exit when an overlay exists.
+                api.prevent_close();
+                AppState::begin_shutdown(app);
+            }
+            tauri::RunEvent::ExitRequested { api, .. }
+                if !app.state::<AppState>().shutdown_complete.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                api.prevent_exit();
+                AppState::begin_shutdown(app);
+            }
+            _ => {}
+        });
 }
 
 /// WebKitGTK's DMABUF renderer shows a blank window on many NVIDIA setups

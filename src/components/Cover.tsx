@@ -3,6 +3,7 @@ import { memo, useState } from "react";
 import type { GameMetadata } from "../contract";
 import { useT } from "../i18n";
 import { coverSrc, hueFor, shouldBlur } from "../lib/cover";
+import { BlurredImage } from "./BlurredImage";
 import { useAppSettings } from "../state/app";
 
 interface CoverProps {
@@ -28,18 +29,18 @@ export const Cover = memo(function Cover({ title, originalTitle, metadata, src, 
   const showImage = url && !failed;
   const hue = hueFor(title);
   const initial = (originalTitle || title).trim().slice(0, 1).toUpperCase() || "?";
+  const placeholder = (
+    <div className="cover-placeholder" aria-hidden>
+      <span className="cover-initial" lang={originalTitle ? "ja" : undefined}>{initial}</span>
+      <span className="cover-ph-title">{title}</span>
+    </div>
+  );
   return (
     <div className={`cover cover-${size}${blur ? " is-blurred" : ""}`} style={{ "--cover-hue": hue } as React.CSSProperties}>
       {showImage ? (
-        <img src={url} alt="" loading={eager ? "eager" : "lazy"} decoding="async" draggable={false} onError={() => setFailed(true)} />
-      ) : (
-        <div className="cover-placeholder" aria-hidden>
-          <span className="cover-initial" lang={originalTitle ? "ja" : undefined}>
-            {initial}
-          </span>
-          <span className="cover-ph-title">{title}</span>
-        </div>
-      )}
+        blur ? <BlurredImage key={url} src={url} blur={18} saturation={0.7} eager={eager} fallback={placeholder} onError={() => setFailed(true)} />
+          : <img src={url} alt="" loading={eager ? "eager" : "lazy"} decoding="async" draggable={false} onError={() => setFailed(true)} />
+      ) : placeholder}
       {blur && showImage && (
         revealable ? (
           <button type="button" className="cover-blur-note" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRevealed(true); }}>

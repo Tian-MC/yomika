@@ -45,6 +45,21 @@ pub fn resolve_launch(
     game_id: GameId,
 ) -> Result<ResolvedLaunch, AppError> {
     let game = library.get_game(game_id)?;
+    // Validate before resolving/creating a prefix or wrapping with gamescope:
+    // Wine's executable lives inside argv and would otherwise escape spawn's
+    // executable check, while a missing cwd misleadingly blames the wrapper.
+    if !game.effective_working_dir().is_dir() {
+        return Err(AppError::not_found(
+            "The game folder is not accessible. Check whether the game was moved or its drive is not mounted.",
+        )
+        .with_details(game.effective_working_dir().display().to_string()));
+    }
+    if !game.exe_path.is_file() {
+        return Err(AppError::not_found(
+            "The game executable is not accessible. Update its path in the game's launch settings.",
+        )
+        .with_details(game.exe_path.display().to_string()));
+    }
     let settings = library.get_settings(game_id)?;
     let app_settings = library.get_app_settings()?;
 
@@ -285,5 +300,29 @@ mod tests {
 
     fn which_gamescope() -> Option<std::path::PathBuf> {
         std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join("gamescope")).find(|p| p.is_file())
+    }
+
+    #[test]
+    fn missing_game_drive_is_reported_before_runner_or_graphics_resolution() {
+        let env = setup("true");
+        let mut game = env.game.clone();
+        game.install_dir = env._tmp.path().join("unmounted/Games/ゲーム");
+        game.exe_path = game.install_dir.join("game.exe");
+        env.library.update_game(&game).unwrap();
+        let error = resolve_launch(&env.library, &env.runtime, &env.graphics, game.id).err().unwrap();
+        assert_eq!(error.code, vnl_core::ErrorCode::NotFound);
+        assert!(error.message.contains("game folder"));
+        assert!(error.message.contains("drive is not mounted"));
+        assert_eq!(error.details.as_deref(), Some(game.install_dir.to_str().unwrap()));
+    }
+
+    #[test]
+    fn missing_game_executable_is_reported_before_starting_a_wrapper() {
+        let env = setup("true");
+        std::fs::remove_file(&env.game.exe_path).unwrap();
+        let error = resolve_launch(&env.library, &env.runtime, &env.graphics, env.game.id).err().unwrap();
+        assert_eq!(error.code, vnl_core::ErrorCode::NotFound);
+        assert!(error.message.contains("game executable"));
+        assert_eq!(error.details.as_deref(), Some(env.game.exe_path.to_str().unwrap()));
     }
 }

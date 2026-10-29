@@ -11,7 +11,7 @@ translation backend.
 Built with [Tauri 2](https://v2.tauri.app/) (Rust backend, WebKitGTK webview) and React 19 +
 TypeScript.
 
-> **Status: pre-alpha (0.1.1-alpha.2, under active development).** Interfaces, data formats and
+> **Status: pre-alpha (0.1.1-alpha.3, under active development).** Interfaces, data formats and
 > settings may change without migration. Don't point it at a Wine prefix you can't afford to
 > lose; the launcher never deletes or resets prefixes on purpose, but it hasn't been tested
 > in real use yet.

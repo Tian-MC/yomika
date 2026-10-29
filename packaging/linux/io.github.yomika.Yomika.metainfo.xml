@@ -60,6 +60,9 @@
   <!-- Add real screenshots before submission to Flathub. -->
 
   <releases>
+    <release version="0.1.1-alpha.3" date="2026-10-29" type="development">
+      <description><p>Improve scrolling performance with cached blurred thumbnails and report inaccessible game folders before launching Wine or gamescope.</p></description>
+    </release>
     <release version="0.1.1-alpha.2" date="2026-10-29" type="development">
       <description><p>Fix application shutdown and cleanup of game processes, companions and translation hosts.</p></description>
     </release>

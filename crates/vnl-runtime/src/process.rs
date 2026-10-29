@@ -28,6 +28,26 @@ pub type LogFile = Arc<Mutex<std::fs::File>>;
 /// group (pgid == pid), stdin closed, stdout/stderr piped.
 pub fn spawn_group(spec: &CommandSpec, flatpak: bool) -> Result<Child, AppError> {
     let spec = finalize_for_spawn(spec, flatpak);
+    // chdir failure is returned by spawn as ENOENT too. Check cwd separately
+    // so a missing game drive is not reported as a missing gamescope/Wine.
+    if let Some(cwd) = &spec.cwd {
+        match std::fs::metadata(cwd) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(
+                    AppError::invalid("The working directory is not a folder").with_details(cwd.display().to_string())
+                );
+            }
+            Err(e) => {
+                let code = if e.kind() == std::io::ErrorKind::NotFound { ErrorCode::NotFound } else { ErrorCode::Io };
+                return Err(AppError::new(
+                    code,
+                    "The working directory is not accessible. Check the game location and that its drive is mounted.",
+                )
+                .with_details(format!("{}: {e}", cwd.display())));
+            }
+        }
+    }
     let mut cmd = tokio::process::Command::from(spec.to_std_command());
     // AppImages may export Python paths under /tmp/.mount_*/usr. If inherited,
     // Proton's Python interpreter looks there for its standard library and
@@ -477,5 +497,26 @@ mod tests {
         drop(registration); // cancelled task/future must not detach its process
         let _ = child.wait().await;
         assert!(!pid_alive(pid));
+    }
+
+    #[tokio::test]
+    async fn missing_working_directory_is_not_reported_as_missing_wrapper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("Games/ゲーム");
+        let error = spawn_group(&CommandSpec::new("/bin/sh").args(["-c", "exit 0"]).cwd(&missing), false).unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(error.message.contains("working directory"));
+        assert!(error.details.unwrap().contains(&missing.display().to_string()));
+        assert!(!error.message.contains("failed to start /bin/sh"));
+    }
+
+    #[tokio::test]
+    async fn working_directory_must_be_a_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("not a directory");
+        std::fs::write(&file, "file").unwrap();
+        let error = spawn_group(&CommandSpec::new("/bin/sh").cwd(&file), false).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert!(error.message.contains("not a folder"));
     }
 }

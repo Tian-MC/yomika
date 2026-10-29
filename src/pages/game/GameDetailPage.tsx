@@ -1,6 +1,7 @@
 import { ArrowLeft, BookOpen, Gamepad2, HardDrive, Languages, MonitorPlay, Save, TerminalSquare, Undo2, Wine } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useBlocker, useParams, useSearchParams } from "react-router-dom";
+import { BlurredImage } from "../../components/BlurredImage";
 import { Cover } from "../../components/Cover";
 import { PlayControls } from "../../components/PlayControls";
 import { Button } from "../../components/ui/Button";
@@ -126,7 +127,9 @@ function GameDetail({ gameId }: { gameId: number }) {
   return (
     <div className="page game-page">
       <div className="hero">
-        {backdrop && <div className={blurBackdrop ? "hero-backdrop is-blurred" : "hero-backdrop"} style={{ backgroundImage: `url("${backdrop}")` }} aria-hidden />}
+        {backdrop && <div className={blurBackdrop ? "hero-backdrop is-blurred" : "hero-backdrop"} aria-hidden>
+          <BlurredImage key={backdrop} src={backdrop} blur={blurBackdrop ? 70 : 40} saturation={blurBackdrop ? 0.9 : 1} eager />
+        </div>}
         <div className="hero-inner">
           <BackLink />
           <div className="hero-content">

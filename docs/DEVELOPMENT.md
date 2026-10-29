@@ -181,3 +181,18 @@ Example: `library_toggle_favorite(game_id) -> Game`.
 - Right-click, then "Inspect Element", opens the WebKit inspector in debug builds.
 - WebKitGTK rendering problems (blank window, flicker): see
   [TROUBLESHOOTING.md](TROUBLESHOOTING.md#blank-or-white-window-webkitgtk).
+
+## Debugging helpers
+
+| Variable | Effect |
+|---|---|
+| `VNL_HOME=/some/dir` | Keep all data/config/cache under that directory (isolated dev/test data). |
+| `VNL_LOG=debug` | Tracing filter for the backend (`info` by default). |
+| `VNL_INITIAL_ROUTE=/diagnostics` | Open that page at startup (smoke tests, screenshots). |
+| `VNL_VNDB_URL=http://127.0.0.1:8080` | Point the VNDB client at a mock server. |
+| `VNL_SECRET_BACKEND=file` | Store provider API keys in the 0600 file fallback instead of the Secret Service. |
+
+Note: a plain `cargo build --release` produces a binary that loads the Vite
+dev server (`devUrl`). Release binaries must be built through the Tauri CLI
+(`npm run tauri build`, `make build`), which enables `tauri/custom-protocol`
+and embeds `dist/`.

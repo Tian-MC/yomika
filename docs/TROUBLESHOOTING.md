@@ -110,7 +110,7 @@ The UI is a WebKitGTK webview. If the window stays white/blank, flickers, or cra
 
 | Symptom | Try |
 |---|---|
-| Blank window on NVIDIA (proprietary driver), Wayland | `WEBKIT_DISABLE_DMABUF_RENDERER=1 vn-launcher` |
+| Blank window on NVIDIA (proprietary driver), Wayland | Applied automatically when `/proc/driver/nvidia/version` exists; otherwise run `WEBKIT_DISABLE_DMABUF_RENDERER=1 vn-launcher` (set it to `0` to opt out) |
 | Blank/garbled window in VMs or with broken GL | `WEBKIT_DISABLE_COMPOSITING_MODE=1 vn-launcher` |
 | `Failed to create GBM buffer` / EGL errors | `WEBKIT_DISABLE_DMABUF_RENDERER=1`, or force X11: `GDK_BACKEND=x11 vn-launcher` |
 | AppImage only: EGL/Mesa errors, crash at start | The AppImage bundles WebKitGTK from the build host; prefer the distro package / PKGBUILD, or try `WEBKIT_DISABLE_DMABUF_RENDERER=1` (see [PACKAGING.md](PACKAGING.md#appimage)) |

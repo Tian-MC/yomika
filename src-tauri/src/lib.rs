@@ -15,6 +15,7 @@ pub use state::AppState;
 
 pub fn run() {
     init_tracing();
+    apply_webkit_workarounds();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -24,6 +25,7 @@ pub fn run() {
             // Covers live in the cache dir, which can be relocated with VNL_HOME.
             let _ = app.asset_protocol_scope().allow_directory(state.paths.covers_dir(), true);
             app.manage(state);
+            navigate_to_initial_route(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,6 +92,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running VN Launcher");
+}
+
+/// WebKitGTK's DMABUF renderer shows a blank window on many NVIDIA setups
+/// ("Failed to create GBM buffer"). Disable it there unless the user chose
+/// explicitly. Must run before GTK/WebKit initialise (single-threaded here).
+fn apply_webkit_workarounds() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(VAR).is_none() && std::path::Path::new("/proc/driver/nvidia/version").exists() {
+        tracing::info!("NVIDIA driver detected: setting {VAR}=1");
+        // SAFETY: called at the start of `run`, before any other thread exists.
+        unsafe { std::env::set_var(VAR, "1") };
+    }
+}
+
+/// Debug/screenshot aid: `VNL_INITIAL_ROUTE=/diagnostics` opens that page.
+fn navigate_to_initial_route(app: &tauri::AppHandle) {
+    let Some(route) = std::env::var("VNL_INITIAL_ROUTE").ok().filter(|r| r.starts_with('/')) else {
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        if let Some(window) = app.get_webview_window("main") {
+            let hash = serde_json::to_string(&format!("#{route}")).unwrap_or_default();
+            let _ = window.eval(format!("window.location.hash = {hash};"));
+        }
+    });
 }
 
 fn init_tracing() {

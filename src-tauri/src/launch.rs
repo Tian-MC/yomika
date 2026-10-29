@@ -234,6 +234,54 @@ mod tests {
         assert_eq!(&cmd.args[sep + 2..], ["--flag", "value with space"]);
     }
 
+    /// Full pipeline with the system Wine and a fresh dedicated prefix (in a
+    /// tempdir). Slow on first run (prefix init): `cargo test -p vnl-app -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs system wine; initialises a temporary prefix"]
+    async fn real_wine_game_through_full_pipeline() {
+        let builtin = Path::new("/usr/lib/wine/x86_64-windows/hostname.exe");
+        if !builtin.is_file() {
+            eprintln!("wine builtin hostname.exe not found; skipping");
+            return;
+        }
+        let env = setup("true");
+        let game_dir = env.game.install_dir.clone();
+        let exe = game_dir.join("hostname.exe");
+        std::fs::copy(builtin, &exe).unwrap();
+        let mut game = env.game.clone();
+        game.exe_path = exe;
+        game.launch_args.clear();
+        env.library.update_game(&game).unwrap();
+        let mut settings = env.library.get_settings(env.game.id).unwrap();
+        settings.runtime.runner = Some(RunnerRef { id: vnl_runtime::SYSTEM_WINE_ID.into() });
+        env.library.save_settings(env.game.id, &settings).unwrap();
+
+        let resolved = resolve_launch(&env.library, &env.runtime, &env.graphics, env.game.id).unwrap();
+        assert!(resolved.prefix.path.starts_with(&env._tmp.path()), "prefix must live in the tempdir");
+        assert_eq!(resolved.command.env.get("LANG").map(String::as_str), Some("ja_JP.UTF-8"));
+
+        let session = env.runtime.start_session(resolved.to_request()).await.unwrap();
+        let finished = env.runtime.wait_session(&session.id, Duration::from_secs(240)).await.expect("finished");
+        assert_eq!(finished.state, SessionState::Exited, "{finished:?}");
+        assert_eq!(finished.exit_code, Some(0));
+        record_session_end(&env.library, &finished).unwrap();
+        assert!(resolved.prefix.path.join("pfx/drive_c").is_dir() || resolved.prefix.path.join("drive_c").is_dir());
+
+        let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default().trim().to_lowercase();
+        let stdout: Vec<String> = env
+            .sink
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                AppEvent::Log(l) if l.source == "game.stdout" => Some(l.message.to_lowercase()),
+                _ => None,
+            })
+            .collect();
+        if !host.is_empty() {
+            assert!(stdout.iter().any(|l| l.contains(&host)), "stdout {stdout:?} lacks hostname {host}");
+        }
+    }
+
     fn which_gamescope() -> Option<std::path::PathBuf> {
         std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join("gamescope")).find(|p| p.is_file())
     }

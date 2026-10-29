@@ -12,6 +12,7 @@
 //! - Each sentence: `[%I64X:%I32X:%I64X:%I64X:%I64X:%s:%s] %s\n` =
 //!   `[handle:pid:addr:ctx:ctx2:name:hookcode] text` (hex numbers). The text
 //!   may contain newlines; continuation lines have no header.
+//! - GSM LunaHook adds `#id|` before that same context: `[#id|handle:pid:…] text`.
 //! - Host messages (injection results, "pipe connected", errors) come from
 //!   the "Console" thread (pid 0, handle 0); handle 1 / pid 0 is the host's
 //!   own "Clipboard" thread and is ignored.
@@ -88,6 +89,14 @@ fn parse_hex<T: TryFrom<u64>>(s: &str) -> Option<T> {
 /// Parses a header line. Returns `None` for lines that are not sentence headers.
 pub fn parse_header_line(line: &str) -> Option<HostSentence> {
     let rest = line.strip_prefix('[')?;
+    // GSM prefixes the same legacy context with a redundant hexadecimal display ID.
+    let rest = if let Some(gsm) = rest.strip_prefix('#') {
+        let (id, context) = gsm.split_once('|')?;
+        parse_hex::<u64>(id)?;
+        context
+    } else {
+        rest
+    };
     let mut parts = rest.splitn(6, ':');
     let handle = parse_hex::<u64>(parts.next()?)?;
     let pid = parse_hex::<u32>(parts.next()?)?;
@@ -279,6 +288,54 @@ mod tests {
         assert_eq!(classify_console(&c.text), HostMessageKind::ArchitectureMismatch);
         assert!(parse_header_line("Usage: {'attach'|'detach'|hookcode} -Pprocessid").is_none());
         assert!(parse_header_line("[not:a:header").is_none());
+    }
+
+    #[test]
+    fn parses_gsm_context_with_the_same_identity_as_legacy() {
+        let gsm = format!("[#17|{}", &SAMPLE_FULL[1..]);
+        assert_eq!(parse_header_line(&gsm), parse_header_line(SAMPLE_FULL));
+        let sentence =
+            parse_header_line("[#0|0:150:7BE5B820:FFFFFFFFFFFFFFFF:AB:BGI:HS4@0:Yorikure.exe] 台詞").unwrap();
+        assert_eq!(
+            (sentence.handle, sentence.pid, sentence.addr, sentence.ctx, sentence.ctx2),
+            (0, 336, 0x7BE5B820, u64::MAX, 0xAB)
+        );
+        assert_eq!(sentence.name, "BGI");
+        assert_eq!(sentence.hook_code, "HS4@0:Yorikure.exe");
+        for invalid in [
+            "[#bad-id|0:150:1:0:0:BGI:H@0] text",
+            "[#0:150:1:0:0:BGI:H@0] text",
+            "[Console] Connected process 336",
+            "[Hook #0 created] Handle: 0",
+        ] {
+            assert!(parse_header_line(invalid).is_none(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn gsm_utf16_continuations_and_service_lines_remain_separate() {
+        let mut decoder = StreamDecoder::default();
+        let mut parser = HostParser::default();
+        let input = "[#0|0:150:7BE5B820:0:AB:BGI:HS4@0:Yorikure.exe] 最初の台詞\r\n続き𠮷\r\n[Console] Connected process 336\r\n[Hook #0 created] Handle: 0\r\n[#1|1:150:7BE5B820:0:CD:BGI:HS4@0:Yorikure.exe] 次の台詞\r\n";
+        let mut events = Vec::new();
+        for chunk in encode_utf16le(input).chunks(3) {
+            for line in decoder.push(chunk) {
+                events.extend(parser.feed_line(&line));
+            }
+        }
+        if let Some(rest) = decoder.finish() {
+            events.extend(parser.feed_line(&rest));
+        }
+        events.extend(parser.flush());
+        assert_eq!(events.len(), 4);
+        assert!(
+            matches!(&events[0], HostEvent::Sentence(s) if s.handle == 0 && s.pid == 336 && s.text == "最初の台詞\n続き𠮷")
+        );
+        assert_eq!(events[1], HostEvent::Console("Connected process 336".into()));
+        assert!(matches!(&events[2], HostEvent::Noise(n) if n == "[Hook #0 created] Handle: 0"));
+        assert!(
+            matches!(&events[3], HostEvent::Sentence(s) if s.handle == 1 && s.ctx2 == 0xCD && s.text == "次の台詞")
+        );
     }
 
     #[test]

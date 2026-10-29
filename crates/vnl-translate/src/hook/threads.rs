@@ -166,6 +166,32 @@ mod tests {
     }
 
     #[test]
+    fn gsm_threads_keep_pid_filter_selection_and_saved_fingerprint() {
+        let parse = |handle: u64, pid: u32, context: u64, text: &str| {
+            parse_header_line(&format!(
+                "[#{handle:X}|{handle:X}:{pid:X}:7BE5B820:0:{context:X}:BGI:HS4@0:Yorikure.exe] {text}"
+            ))
+            .unwrap()
+        };
+        let mut registry = ThreadRegistry::default();
+        registry.begin();
+        assert!(registry.observe(parse(0, 999, 1, "foreign process"), 336).is_none());
+        assert!(registry.snapshot().0.is_empty());
+        assert!(registry.observe(parse(0, 336, 1, "menu"), 336).is_none());
+        assert!(registry.observe(parse(1, 336, 2, "dialogue"), 336).is_none());
+        let saved = registry.select(Some("150:1")).unwrap();
+        assert!(registry.observe(parse(0, 336, 1, "noise"), 336).is_none());
+        let event = registry.observe(parse(1, 336, 2, "台詞"), 336).unwrap();
+        assert!(registry.accepts(&event));
+        assert!(registry.observe(parse(1, 336, 2, "台詞"), 336).is_none());
+        registry.selection = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        registry.begin();
+        assert!(!registry.accepts(&event));
+        assert!(registry.observe(parse(9, 400, 2, "next session"), 400).is_some());
+        assert_eq!(registry.snapshot().1.as_deref(), Some("190:9"));
+    }
+
+    #[test]
     fn ignores_foreign_pids_and_bounds_thread_previews() {
         let mut registry = ThreadRegistry::default();
         assert!(registry.observe(sentence(1, 0, "wrong game"), 999).is_none());

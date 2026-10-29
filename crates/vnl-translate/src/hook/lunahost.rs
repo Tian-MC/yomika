@@ -274,6 +274,17 @@ fn kill_group(pgid: i32) {
     let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
 }
 
+fn launcher_exit_status(status: &std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(code) = status.code() {
+        format!("exit code {code}")
+    } else if let Some(signal) = status.signal() {
+        format!("signal {signal}")
+    } else {
+        format!("{status}")
+    }
+}
+
 struct Ctx {
     exe_name: String,
     prefix: Arc<dyn PrefixCommandBuilder>,
@@ -532,7 +543,14 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
                     }
                     if ctx.status.get().state == TextSourceState::Failed { break; }
                 }
-                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(0)) => {
+                    ctx.status.push("Hook host stdout reached EOF.");
+                    break;
+                }
+                Ok(Err(error)) => {
+                    ctx.status.fail(format!("Hook host stdout read failed: {error}"));
+                    break;
+                }
                 Ok(Ok(n)) => {
                     let mut out = Vec::new();
                     for line in decoder.push(&buf[..n]) {
@@ -572,11 +590,12 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         // stdout closed: wait for the host to exit, unless we are asked to stop.
         tokio::select! {
             _ = &mut stop => stopped = true,
-            s = tokio::time::timeout(Duration::from_millis(500), child.wait()) => exit_status = s.ok().and_then(Result::ok),
+            result = tokio::time::timeout(Duration::from_millis(500), child.wait()) => match result {
+                Ok(Ok(status)) => exit_status = Some(status),
+                Ok(Err(error)) => ctx.status.fail(format!("Cannot wait for hook host launcher {}: {error}", spec.program.display())),
+                Err(_) => ctx.status.fail("Hook host launcher did not exit within 500ms after stdout EOF; Yomika is stopping it."),
+            },
         }
-    }
-    if !stopped && ctx.status.get().state != TextSourceState::Failed && exit_status.is_none() {
-        ctx.status.fail("Hook host closed its output without exiting; stopping it.");
     }
     if stopped || ctx.status.get().state == TextSourceState::Failed || exit_status.is_none() {
         // Detach politely so the game unloads the hook, then terminate the host.
@@ -587,11 +606,33 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         .await;
         let _ = tokio::time::timeout(Duration::from_millis(500), stdin.flush()).await;
         drop(stdin);
-        if tokio::time::timeout(Duration::from_millis(500), child.wait()).await.is_err() {
-            if let Some(pg) = *ctx.pgid.lock().unwrap() {
-                kill_group(pg);
+        match tokio::time::timeout(Duration::from_millis(500), child.wait()).await {
+            Ok(Ok(status)) => ctx.status.push(format!(
+                "Hook host launcher {} exited during cleanup ({}).",
+                spec.program.display(),
+                launcher_exit_status(&status)
+            )),
+            result => {
+                match result {
+                    Ok(Err(error)) => {
+                        ctx.status.fail(format!("Cannot wait for hook host launcher during cleanup: {error}"))
+                    }
+                    Err(_) => ctx.status.push("Hook host cleanup timed out; Yomika is terminating its process group."),
+                    Ok(Ok(_)) => unreachable!(),
+                }
+                if let Some(pg) = *ctx.pgid.lock().unwrap() {
+                    kill_group(pg);
+                }
+                if let Err(error) = child.kill().await {
+                    ctx.status.fail(format!("Cannot terminate hook host launcher: {error}"));
+                } else if let Ok(Some(status)) = child.try_wait() {
+                    ctx.status.push(format!(
+                        "Hook host launcher {} exited after Yomika termination ({}).",
+                        spec.program.display(),
+                        launcher_exit_status(&status)
+                    ));
+                }
             }
-            let _ = child.kill().await;
         }
     } else {
         // Host ended on its own.
@@ -599,8 +640,9 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         tokio::time::sleep(Duration::from_millis(50)).await;
         let tail = stderr_tail.lock().unwrap().join(" | ");
         ctx.status.fail(format!(
-            "Hook host exited unexpectedly ({}){}",
-            status.map(|s| s.to_string()).unwrap_or_else(|| "unknown status".into()),
+            "Hook host launcher {} exited unexpectedly ({}); this is the launcher's status, not proof of the Windows CLI's exit cause{}",
+            spec.program.display(),
+            status.as_ref().map(launcher_exit_status).unwrap_or_else(|| "unknown status".into()),
             if tail.is_empty() { String::new() } else { format!(": {tail}") }
         ));
     }
@@ -665,9 +707,12 @@ impl TextSource for LunaHostAdapter {
         self.threads.lock().unwrap().close();
         let running = self.running.lock().unwrap().take();
         if let Some(r) = running {
+            self.status.push("Yomika requested hook host stop.");
             let _ = r.stop.send(());
             let mut task = r.task;
             if tokio::time::timeout(Duration::from_secs(3), &mut task).await.is_err() {
+                self.status
+                    .push("Hook host stop timed out; Yomika is aborting its task and terminating its process group.");
                 task.abort();
                 let _ = task.await;
                 if let Some(pg) = *r.pgid.lock().unwrap() {
@@ -1013,6 +1058,46 @@ mod tests {
         assert!(status.diagnostics.iter().any(|d| d.contains("attach timed out")));
         assert!(status.hook_threads.is_empty());
         adapter.stop().await;
+    }
+
+    #[test]
+    fn launcher_exit_code_nine_is_distinct_from_signal_nine() {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(launcher_exit_status(&std::process::ExitStatus::from_raw(9 << 8)), "exit code 9");
+        assert_eq!(launcher_exit_status(&std::process::ExitStatus::from_raw(9)), "signal 9");
+    }
+
+    #[tokio::test]
+    async fn stdout_eof_reports_launcher_exit_without_attributing_windows_cause() {
+        let (tmp, adapter) = setup("", TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        std::fs::write(tmp.path().join("host.sh"), "dd bs=1 count=26 of=/dev/null 2>/dev/null\nexit 9\n").unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Failed).await;
+        let diagnostics = adapter.status().diagnostics.join("\n");
+        assert!(diagnostics.contains("stdout reached EOF"), "{diagnostics}");
+        assert!(diagnostics.contains("launcher /bin/sh exited unexpectedly (exit code 9)"), "{diagnostics}");
+        assert!(diagnostics.contains("not proof of the Windows CLI's exit cause"));
+        assert!(!diagnostics.contains("signal 9"));
+        assert!(!diagnostics.contains("Yomika requested hook host stop"));
+        adapter.stop().await;
+    }
+
+    #[tokio::test]
+    async fn stdout_eof_without_launcher_exit_reports_timeout_and_cleans_up() {
+        let (tmp, adapter) = setup("", TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        std::fs::write(tmp.path().join("host.sh"), "exec 1>&-\nexec sleep 30\n").unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Failed).await;
+        let diagnostics = adapter.status().diagnostics.join("\n");
+        assert!(diagnostics.contains("stdout reached EOF"));
+        assert!(diagnostics.contains("did not exit within 500ms after stdout EOF"), "{diagnostics}");
+        adapter.stop().await;
+        let diagnostics = adapter.status().diagnostics.join("\n");
+        assert!(diagnostics.contains("Yomika requested hook host stop"));
+        assert!(diagnostics.contains("Yomika is terminating its process group"));
+        assert!(diagnostics.contains("exited after Yomika termination (signal 9)"), "{diagnostics}");
     }
 
     #[tokio::test]

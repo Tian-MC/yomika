@@ -1,6 +1,6 @@
 // Translation / text extraction / OCR / overlay contract. Owned by Agent 4.
 // Rust side: crates/vnl-translate + src-tauri/src/commands/translation.rs
-import type { CaptureRegion, GameId, OverlayConfig, SessionId, TranslationLine } from "./core";
+import type { CaptureRegion, GameId, HookThreadSelection, OverlayConfig, SessionId, TranslationLine } from "./core";
 
 export type ProviderKind = "local" | "online";
 
@@ -95,7 +95,16 @@ export interface OcrCaptureRequest {
 
 export type TextSourceState = "inactive" | "starting" | "active" | "failed";
 
+export interface HookThread {
+  id: string;
+  selector: HookThreadSelection;
+  preview: string;
+  received: number;
+}
+
 export interface TranslationSessionStatus {
+  hookThreads: HookThread[];
+  selectedHookThread: string | null;
   sessionId: SessionId;
   hook: TextSourceState;
   ocr: TextSourceState;
@@ -126,6 +135,7 @@ export interface TranslationCommands {
   translation_ocr_backends: { args: Record<string, never>; result: BackendInfo[] };
   translation_ocr_capture: { args: { request: OcrCaptureRequest }; result: TranslationLine };
   translation_hook_backends: { args: Record<string, never>; result: BackendInfo[] };
+  translation_hook_select_thread: { args: { sessionId: SessionId; gameId: GameId; threadId: string | null }; result: HookThreadSelection | null };
   translation_session_status: { args: { sessionId: SessionId }; result: TranslationSessionStatus };
   /** Creates/shows window "overlay" (index.html#/overlay) and sends OverlayConfig to it via OVERLAY_CONFIG_EVENT. */
   overlay_show: { args: { config?: OverlayConfig | null }; result: null };

@@ -148,6 +148,31 @@ pub async fn translation_session_status(
     Ok(state.translation.session_status(&session_id).await)
 }
 
+/// Change only the selected thread in the existing per-game settings JSON.
+#[tauri::command]
+pub async fn translation_hook_select_thread(
+    state: State<'_, AppState>,
+    session_id: String,
+    game_id: GameId,
+    thread_id: Option<String>,
+) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
+    let session = state.runtime.session(&session_id).ok_or_else(|| AppError::not_found("Game session not found"))?;
+    if session.game_id != game_id
+        || !matches!(session.state, vnl_core::SessionState::Starting | vnl_core::SessionState::Running)
+    {
+        return Err(AppError::invalid("Thread selection does not belong to an active session of this game"));
+    }
+    let mut settings = state.library.get_settings(game_id)?;
+    let previous = state.translation.session_status(&session_id).await.selected_hook_thread;
+    let selection = state.translation.select_hook_thread(&session_id, thread_id.as_deref()).await?;
+    settings.translation.hook.thread = selection.clone();
+    if let Err(error) = state.library.save_settings(game_id, &settings) {
+        let _ = state.translation.select_hook_thread(&session_id, previous.as_deref()).await;
+        return Err(error);
+    }
+    Ok(selection)
+}
+
 /// Tauri implementation of [`OverlayController`]: a transparent, undecorated,
 /// always-on-top window labelled `overlay` loading `index.html#/overlay`.
 ///

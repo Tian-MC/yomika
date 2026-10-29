@@ -249,15 +249,27 @@ impl TranslationPipeline {
     }
 
     /// Translates an accepted line, emits the result and stores history.
-    pub async fn complete(&self, mut line: TranslationLine) -> TranslationLine {
+    pub async fn complete(&self, line: TranslationLine) -> TranslationLine {
+        self.complete_if(line, || true).await
+    }
+
+    /// Discard a late provider response after its text thread was deselected.
+    pub(crate) async fn complete_if(&self, mut line: TranslationLine, valid: impl Fn() -> bool) -> TranslationLine {
+        if !valid() {
+            return line;
+        }
         if let (Some(provider), Some(langs)) = (&self.cfg.provider, &self.cfg.languages) {
             match translate_with_glossary(provider.as_ref(), &line.source_text, langs, &self.cfg.glossary).await {
                 Ok(t) => line.translated_text = Some(t),
                 Err(e) => line.error = Some(e.message),
             }
+            if !valid() {
+                return line;
+            }
             self.events.emit(AppEvent::Translation(line.clone()));
         }
-        if self.cfg.keep_history
+        if valid()
+            && self.cfg.keep_history
             && let Some(store) = &self.store
             && let Err(e) = store.history_put(&line)
         {
@@ -403,6 +415,67 @@ pub(crate) mod tests {
         let h = store.history_list(Some(7), 10).unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].translated_text.as_deref(), Some("<de:こんにちは世界>"));
+    }
+
+    #[tokio::test]
+    async fn deselection_during_provider_request_discards_result_and_history() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct DeferredProvider {
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+        #[async_trait]
+        impl TranslationProvider for DeferredProvider {
+            fn id(&self) -> &str {
+                "deferred"
+            }
+            fn sends_data_remotely(&self) -> bool {
+                false
+            }
+            fn kind(&self) -> ProviderKind {
+                ProviderKind::Local
+            }
+            fn glossary_strategy(&self) -> GlossaryStrategy {
+                GlossaryStrategy::PromptHints
+            }
+            async fn translate(&self, _: &ProviderRequest) -> Result<String, AppError> {
+                self.entered.notify_one();
+                self.release.notified().await;
+                Ok("late translation".into())
+            }
+        }
+        let provider =
+            Arc::new(DeferredProvider { entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new() });
+        let sink = RecordingSink::new();
+        let store = Arc::new(TranslationStore::open_in_memory().unwrap());
+        let pipe = Arc::new(TranslationPipeline::new(
+            PipelineConfig {
+                session_id: Some("session".into()),
+                game_id: Some(1),
+                provider: Some(provider.clone()),
+                languages: Some(langs()),
+                source_language: None,
+                glossary: vec![],
+                keep_history: true,
+                dedupe: true,
+            },
+            Arc::new(sink.clone()),
+            Some(store.clone()),
+        ));
+        let line = pipe.accept(&TextEvent::new(TextOrigin::Hook, "original")).unwrap();
+        let selected = Arc::new(AtomicBool::new(true));
+        let task = {
+            let selected = selected.clone();
+            tokio::spawn(async move {
+                pipe.complete_if(line, || selected.load(Ordering::SeqCst)).await;
+            })
+        };
+        provider.entered.notified().await;
+        selected.store(false, Ordering::SeqCst);
+        provider.release.notify_one();
+        task.await.unwrap();
+        assert_eq!(sink.events().len(), 1, "only the original emitted before deselection");
+        assert!(store.history_list(Some(1), 10).unwrap().is_empty());
     }
 
     #[tokio::test]

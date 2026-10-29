@@ -59,16 +59,19 @@ pub struct DefaultSourceFactory {
 impl SourceFactory for DefaultSourceFactory {
     fn hook(&self, ctx: &SessionContext) -> Result<Arc<dyn TextSource>, AppError> {
         match ctx.config.hook.backend.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
-            None | Some(crate::hook::lunahost::BACKEND_ID) => Ok(Arc::new(LunaHostAdapter::new(
-                self.tools_dir.clone(),
-                ctx.game_exe.clone(),
-                ctx.prefix.clone(),
-                ctx.config.hook.hook_code.clone(),
-                LunaHostOptions {
-                    attach_delay: Duration::from_millis(ctx.config.hook.attach_delay_ms),
-                    ..Default::default()
-                },
-            ))),
+            None | Some(crate::hook::lunahost::BACKEND_ID) => Ok(Arc::new(
+                LunaHostAdapter::new(
+                    self.tools_dir.clone(),
+                    ctx.game_exe.clone(),
+                    ctx.prefix.clone(),
+                    ctx.config.hook.hook_code.clone(),
+                    LunaHostOptions {
+                        attach_delay: Duration::from_millis(ctx.config.hook.attach_delay_ms),
+                        ..Default::default()
+                    },
+                )
+                .with_thread_selection(ctx.config.hook.thread.clone()),
+            )),
             Some(crate::clipboard::BACKEND_ID) => Ok(Arc::new(ClipboardSource::new(Duration::from_millis(400)))),
             Some(other) => {
                 Err(AppError::invalid(format!("unknown hook backend '{other}' (use 'lunahost' or 'clipboard')")))
@@ -120,6 +123,11 @@ impl ActiveSession {
     pub fn status(&self, session_id: &str) -> TranslationSessionStatus {
         let mut st = TranslationSessionStatus::inactive(session_id);
         st.diagnostics = self.diagnostics.clone();
+        if let Some(hook) = &self.hook {
+            let status = hook.status();
+            st.hook_threads = status.hook_threads;
+            st.selected_hook_thread = status.selected_hook_thread;
+        }
         for (src, err, slot, label) in
             [(&self.hook, &self.hook_error, &mut st.hook, "hook"), (&self.ocr, &self.ocr_error, &mut st.ocr, "ocr")]
         {
@@ -224,6 +232,7 @@ pub(crate) async fn start_sources(
             src.stop().await;
         }
     }
+    let hook_source = hook.clone();
     let forward = tokio::spawn(async move {
         // Own provider tasks so stopping extraction also cancels pending work.
         let mut translations = tokio::task::JoinSet::new();
@@ -234,9 +243,16 @@ pub(crate) async fn start_sources(
                 ev = rx.recv() => {
                     let Some(ev) = ev else { break };
                     if cancelled.is_cancelled() { break; }
+                    if ev.origin == vnl_core::TextOrigin::Hook && hook_source.as_ref().is_some_and(|h| !h.accepts(&ev)) { continue; }
                     if let Some(line) = pipeline.accept(&ev) {
                         let p = pipeline.clone();
-                        translations.spawn(async move { p.complete(line).await; });
+                        let source = hook_source.clone();
+                        translations.spawn(async move {
+                            p.complete_if(line, || {
+                                ev.origin != vnl_core::TextOrigin::Hook
+                                    || source.as_ref().is_none_or(|h| h.accepts(&ev))
+                            }).await;
+                        });
                     }
                 }
                 Some(_) = translations.join_next(), if !translations.is_empty() => {}

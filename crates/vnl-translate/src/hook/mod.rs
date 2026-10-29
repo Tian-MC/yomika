@@ -10,6 +10,7 @@ pub mod lunahost;
 pub mod pe;
 pub mod process;
 pub mod protocol;
+mod threads;
 
 use std::path::Path;
 

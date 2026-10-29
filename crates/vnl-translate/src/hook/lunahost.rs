@@ -15,12 +15,9 @@
 //! architecture via `PrefixCommandBuilder` (runinprefix under Proton) →
 //! `attach -P<pid>` (+ optional hook code) → parse UTF-16 output.
 //!
-//! STATUS: implemented and unit-tested against a fake CLI that replays the
-//! documented protocol; **not tested against a real game** (none available
-//! on the development machine). Whether DLL injection works depends on the
-//! Wine/Proton build and the game.
+//! Validated with a fake CLI replaying the legacy protocol; actual DLL
+//! injection still requires testing with a compatible host and Wine/Proton game.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -34,9 +31,9 @@ use super::HookAdapter;
 use super::pe::{PeArch, pe_arch};
 use super::process::{PidMatch, find_game, linux_pids_for_exe, list_windows_processes};
 use super::protocol::{
-    HostEvent, HostMessageKind, HostParser, StreamDecoder, classify_console, encode_utf16le, hook_code_matches,
-    validate_hook_code,
+    HostEvent, HostMessageKind, HostParser, StreamDecoder, classify_console, encode_utf16le, validate_hook_code,
 };
+use super::threads::ThreadRegistry;
 use crate::source::{SourceStatus, StatusCell, TextEvent, TextSender, TextSource};
 use crate::types::{BackendInfo, TextSourceState};
 
@@ -194,6 +191,7 @@ pub struct LunaHostAdapter {
     opts: LunaHostOptions,
     status: StatusCell,
     running: Mutex<Option<Running>>,
+    threads: Arc<Mutex<ThreadRegistry>>,
 }
 
 impl LunaHostAdapter {
@@ -212,7 +210,13 @@ impl LunaHostAdapter {
             opts,
             status: StatusCell::default(),
             running: Mutex::new(None),
+            threads: Arc::default(),
         }
+    }
+
+    pub fn with_thread_selection(self, selection: Option<vnl_core::HookThreadSelection>) -> Self {
+        self.threads.lock().unwrap().selection = selection;
+        self
     }
 
     /// Synchronous checks: CLI present, architecture, hook code.
@@ -266,11 +270,7 @@ impl LunaHostAdapter {
 fn kill_group(pgid: i32) {
     use nix::sys::signal::{Signal, killpg};
     use nix::unistd::Pid;
-    let _ = killpg(Pid::from_raw(pgid), Signal::SIGTERM);
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(800));
-        let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
-    });
+    let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
 }
 
 struct Ctx {
@@ -282,6 +282,16 @@ struct Ctx {
     status: StatusCell,
     tx: TextSender,
     pgid: Arc<Mutex<Option<i32>>>,
+    threads: Arc<Mutex<ThreadRegistry>>,
+}
+
+impl Drop for Ctx {
+    fn drop(&mut self) {
+        self.threads.lock().unwrap().close();
+        if let Some(pg) = self.pgid.lock().unwrap().take() {
+            kill_group(pg);
+        }
+    }
 }
 
 async fn find_pid(ctx: &Ctx, stop: &mut oneshot::Receiver<()>) -> Option<u32> {
@@ -289,18 +299,17 @@ async fn find_pid(ctx: &Ctx, stop: &mut oneshot::Receiver<()>) -> Option<u32> {
     let mut last_err = None;
     let mut last_candidates = Vec::new();
     loop {
-        match list_windows_processes(ctx.prefix.as_ref()).await {
+        let result = tokio::select! {
+            biased;
+            _ = &mut *stop => return None,
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => break,
+            result = list_windows_processes(ctx.prefix.as_ref()) => result,
+        };
+        match result {
             Ok(procs) => match find_game(&procs, &ctx.exe_name) {
                 PidMatch::Exact(p) => {
                     ctx.status
                         .push(format!("Found {} as Windows PID {} (tasklist in the game prefix).", p.image, p.pid));
-                    return Some(p.pid);
-                }
-                PidMatch::SoleCandidate(p) => {
-                    ctx.status.push(format!(
-                        "No process named {} in tasklist; using the only non-system process {} (PID {}).",
-                        ctx.exe_name, p.image, p.pid
-                    ));
                     return Some(p.pid);
                 }
                 PidMatch::NotFound { candidates } => last_candidates = candidates,
@@ -366,15 +375,43 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
     let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut helpers = tokio::task::JoinSet::new();
     {
         let tail = stderr_tail.clone();
-        tokio::spawn(async move {
-            let mut buf = Vec::new();
-            let _ = stderr.read_to_end(&mut buf).await;
-            let text = String::from_utf8_lossy(&buf);
-            let mut t = tail.lock().unwrap();
-            t.extend(text.lines().rev().take(5).map(str::to_string));
-            t.reverse();
+        helpers.spawn(async move {
+            let mut buf = [0; 2048];
+            while let Ok(n) = stderr.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                let mut t = tail.lock().unwrap();
+                t.extend(String::from_utf8_lossy(&buf[..n]).lines().map(str::to_string));
+                let excess = t.len().saturating_sub(5);
+                t.drain(..excess);
+            }
+        });
+    }
+    // Observe the Windows PID in this exact prefix, independent of host output.
+    let (exited_tx, mut exited_rx) = oneshot::channel();
+    {
+        let prefix = ctx.prefix.clone();
+        let poll = ctx.opts.process_poll.max(Duration::from_millis(100));
+        helpers.spawn(async move {
+            let mut missing = 0;
+            loop {
+                tokio::time::sleep(poll).await;
+                if let Ok(procs) = list_windows_processes(prefix.as_ref()).await {
+                    if procs.iter().any(|p| p.pid == pid) {
+                        missing = 0;
+                    } else {
+                        missing += 1;
+                    }
+                    if missing >= 2 {
+                        let _ = exited_tx.send(());
+                        break;
+                    }
+                }
+            }
         });
     }
 
@@ -383,13 +420,26 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         commands.push(format!("{code} -P{pid}\n"));
     }
     for c in &commands {
-        if let Err(e) = stdin.write_all(&encode_utf16le(c)).await {
-            ctx.status.fail(format!("Cannot talk to the hook host: {e}"));
+        let bytes = encode_utf16le(c);
+        let write = tokio::select! {
+            biased;
+            _ = &mut stop => None,
+            result = tokio::time::timeout(Duration::from_secs(1), stdin.write_all(&bytes)) => Some(result),
+        };
+        if !matches!(write, Some(Ok(Ok(())))) {
+            if write.is_some() {
+                ctx.status.fail("Cannot talk to the hook host (write failed or timed out).");
+            }
+            if let Some(pg) = *ctx.pgid.lock().unwrap() {
+                kill_group(pg);
+            }
             let _ = child.kill().await;
+            *ctx.pgid.lock().unwrap() = None;
+            ctx.threads.lock().unwrap().close();
             return;
         }
     }
-    let _ = stdin.flush().await;
+    let _ = tokio::time::timeout(Duration::from_millis(500), stdin.flush()).await;
     ctx.status.push(format!(
         "Sent: attach -P{pid}{}",
         ctx.hook_code.as_ref().map(|c| format!(", hook code {c}")).unwrap_or_default()
@@ -397,19 +447,19 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
 
     let mut decoder = StreamDecoder::default();
     let mut parser = HostParser::default();
-    let mut threads: BTreeMap<String, u64> = BTreeMap::new();
+
     let mut got_text = false;
     let mut connected = false;
     let mut warned = false;
     let attached_at = Instant::now();
+    let attach_deadline = tokio::time::Instant::now() + ctx.opts.no_text_warning;
     let mut buf = vec![0u8; 8192];
     let mut stopped = false;
 
-    let handle_event = |ev: HostEvent,
-                        threads: &mut BTreeMap<String, u64>,
-                        got_text: &mut bool,
-                        connected: &mut bool|
-     -> Option<TextEvent> {
+    let handle_event = |ev: HostEvent, got_text: &mut bool, connected: &mut bool| -> Option<TextEvent> {
+        if ctx.status.get().state == TextSourceState::Failed {
+            return None;
+        }
         match ev {
             HostEvent::Sentence(s) if s.is_console() => {
                 let kind = classify_console(&s.text);
@@ -435,15 +485,7 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
             }
             HostEvent::Sentence(s) if s.is_host_clipboard() => None,
             HostEvent::Sentence(s) => {
-                let key = format!("{} {}", s.name, s.hook_code);
-                let count = threads.entry(key.clone()).or_insert(0);
-                *count += 1;
-                if *count == 1 {
-                    ctx.status.push(format!("Text thread: {key}"));
-                }
-                if let Some(code) = &ctx.hook_code
-                    && !hook_code_matches(code, &s.hook_code)
-                {
+                if s.pid != pid {
                     return None;
                 }
                 if !*got_text {
@@ -451,7 +493,7 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
                     ctx.status.set_state(TextSourceState::Active);
                     ctx.status.push("Receiving game text.");
                 }
-                Some(TextEvent { origin: TextOrigin::Hook, text: s.text, detail: Some(key) })
+                ctx.threads.lock().unwrap().observe(s, pid)
             }
             HostEvent::Usage => None,
             HostEvent::Noise(n) => {
@@ -463,12 +505,18 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
 
     loop {
         tokio::select! {
+            biased;
             _ = &mut stop => { stopped = true; break; }
+            _ = tokio::time::sleep_until(attach_deadline), if !connected && !got_text => {
+                ctx.status.fail("Hook attach timed out: no pipe connection or target-process text. Check the CLI, DLLs and Wine/Proton prefix.");
+                break;
+            }
+            _ = &mut exited_rx => { ctx.status.push("Game process exited; detaching the hook host."); stopped = true; break; }
             r = tokio::time::timeout(ctx.opts.flush_after, stdout.read(&mut buf)) => match r {
                 Err(_) => {
-                    if let Some(ev) = parser.flush()
-                        && let Some(t) = handle_event(ev, &mut threads, &mut got_text, &mut connected)
-                        && ctx.tx.send(t).await.is_err() { stopped = true; break; }
+                    if !stopped && ctx.status.get().state != TextSourceState::Failed && let Some(ev) = parser.flush()
+                        && let Some(t) = handle_event(ev, &mut got_text, &mut connected)
+                        && matches!(ctx.tx.try_send(t), Err(tokio::sync::mpsc::error::TrySendError::Closed(_))) { stopped = true; break; }
                     if !got_text && !warned && attached_at.elapsed() >= ctx.opts.no_text_warning {
                         warned = true;
                         ctx.status.push(format!(
@@ -485,29 +533,34 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
                     let mut out = Vec::new();
                     for line in decoder.push(&buf[..n]) {
                         for ev in parser.feed_line(&line) {
-                            if let Some(t) = handle_event(ev, &mut threads, &mut got_text, &mut connected) { out.push(t); }
+                            if let Some(t) = handle_event(ev, &mut got_text, &mut connected) { out.push(t); }
                         }
                     }
                     for t in out {
-                        if ctx.tx.send(t).await.is_err() { stopped = true; }
+                        if matches!(ctx.tx.try_send(t), Err(tokio::sync::mpsc::error::TrySendError::Closed(_))) { stopped = true; }
                     }
-                    if stopped { break; }
+                    if stopped || ctx.status.get().state == TextSourceState::Failed { break; }
                 }
             }
         }
     }
 
-    if let Some(rest) = decoder.finish() {
+    if !stopped
+        && ctx.status.get().state != TextSourceState::Failed
+        && let Some(rest) = decoder.finish()
+    {
         for ev in parser.feed_line(&rest) {
-            if let Some(t) = handle_event(ev, &mut threads, &mut got_text, &mut connected) {
-                let _ = ctx.tx.send(t).await;
+            if let Some(t) = handle_event(ev, &mut got_text, &mut connected) {
+                let _ = ctx.tx.try_send(t);
             }
         }
     }
-    if let Some(ev) = parser.flush()
-        && let Some(t) = handle_event(ev, &mut threads, &mut got_text, &mut connected)
+    if !stopped
+        && ctx.status.get().state != TextSourceState::Failed
+        && let Some(ev) = parser.flush()
+        && let Some(t) = handle_event(ev, &mut got_text, &mut connected)
     {
-        let _ = ctx.tx.send(t).await;
+        let _ = ctx.tx.try_send(t);
     }
 
     let mut exit_status = None;
@@ -515,13 +568,20 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         // stdout closed: wait for the host to exit, unless we are asked to stop.
         tokio::select! {
             _ = &mut stop => stopped = true,
-            s = child.wait() => exit_status = s.ok(),
+            s = tokio::time::timeout(Duration::from_millis(500), child.wait()) => exit_status = s.ok().and_then(Result::ok),
         }
     }
-    if stopped || ctx.status.get().state == TextSourceState::Failed {
+    if !stopped && ctx.status.get().state != TextSourceState::Failed && exit_status.is_none() {
+        ctx.status.fail("Hook host closed its output without exiting; stopping it.");
+    }
+    if stopped || ctx.status.get().state == TextSourceState::Failed || exit_status.is_none() {
         // Detach politely so the game unloads the hook, then terminate the host.
-        let _ = stdin.write_all(&encode_utf16le(&format!("detach -P{pid}\n"))).await;
-        let _ = stdin.flush().await;
+        let _ = tokio::time::timeout(
+            Duration::from_millis(300),
+            stdin.write_all(&encode_utf16le(&format!("detach -P{pid}\n"))),
+        )
+        .await;
+        let _ = tokio::time::timeout(Duration::from_millis(500), stdin.flush()).await;
         drop(stdin);
         if tokio::time::timeout(Duration::from_millis(500), child.wait()).await.is_err() {
             if let Some(pg) = *ctx.pgid.lock().unwrap() {
@@ -541,6 +601,10 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         ));
     }
     *ctx.pgid.lock().unwrap() = None;
+    ctx.threads.lock().unwrap().close();
+    if stopped && ctx.status.get().state != TextSourceState::Failed {
+        ctx.status.set_state(TextSourceState::Inactive);
+    }
 }
 
 #[async_trait]
@@ -555,6 +619,7 @@ impl TextSource for LunaHostAdapter {
 
     async fn start(&self, tx: TextSender) -> Result<(), AppError> {
         self.stop().await;
+        self.threads.lock().unwrap().begin();
         self.status.set_state(TextSourceState::Starting);
         let (cli, hook_code) = match self.preflight() {
             Ok(v) => v,
@@ -564,6 +629,7 @@ impl TextSource for LunaHostAdapter {
                     e.message,
                     e.details.as_ref().map(|d| format!(" — {d}")).unwrap_or_default()
                 ));
+                self.threads.lock().unwrap().close();
                 return Err(e);
             }
         };
@@ -584,6 +650,7 @@ impl TextSource for LunaHostAdapter {
             status: self.status.clone(),
             tx,
             pgid: pgid.clone(),
+            threads: self.threads.clone(),
         };
         let task = tokio::spawn(run_host(ctx, stop_rx, self.opts.attach_delay));
         *self.running.lock().unwrap() = Some(Running { stop: stop_tx, task, pgid });
@@ -591,12 +658,14 @@ impl TextSource for LunaHostAdapter {
     }
 
     async fn stop(&self) {
+        self.threads.lock().unwrap().close();
         let running = self.running.lock().unwrap().take();
         if let Some(r) = running {
             let _ = r.stop.send(());
             let mut task = r.task;
             if tokio::time::timeout(Duration::from_secs(3), &mut task).await.is_err() {
                 task.abort();
+                let _ = task.await;
                 if let Some(pg) = *r.pgid.lock().unwrap() {
                     kill_group(pg);
                 }
@@ -608,7 +677,17 @@ impl TextSource for LunaHostAdapter {
     }
 
     fn status(&self) -> SourceStatus {
-        self.status.get()
+        let mut status = self.status.get();
+        (status.hook_threads, status.selected_hook_thread) = self.threads.lock().unwrap().snapshot();
+        status
+    }
+
+    fn select_thread(&self, id: Option<&str>) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
+        self.threads.lock().unwrap().select(id)
+    }
+
+    fn accepts(&self, event: &TextEvent) -> bool {
+        self.threads.lock().unwrap().accepts(event)
     }
 }
 
@@ -700,13 +779,28 @@ mod tests {
     async fn attaches_and_parses_output() {
         let (tmp, adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        adapter.threads.lock().unwrap().selection = Some(vnl_core::HookThreadSelection {
+            name: "System43".into(),
+            hook_code: "HSN4:-14@27A78E:Game.exe".into(),
+            context: "0".into(),
+            context2: "19F95C".into(),
+        });
         adapter.start(tx).await.unwrap();
         let first = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
         assert_eq!(first.origin, TextOrigin::Hook);
         assert_eq!(first.text, "わずかな灯りに照らされた道の真ん中で、\n大柄の男が、ずぶ濡れで立っていた。");
-        assert!(first.detail.unwrap().contains("HSN4"));
-        let second = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
-        assert_eq!(second.text, "次の行");
+        assert!(adapter.accepts(&first));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while adapter.status().hook_threads.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(rx.try_recv().is_err());
+        let second = adapter.status().hook_threads.into_iter().find(|t| t.selector.name == "GetGlyphOutlineA").unwrap();
+        adapter.select_thread(Some(&second.id)).unwrap();
+        assert!(!adapter.accepts(&first));
         let st = adapter.status();
         assert_eq!(st.state, TextSourceState::Active);
         assert!(st.diagnostics.iter().any(|d| d.contains("Windows PID 356")), "{:?}", st.diagnostics);
@@ -720,9 +814,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_code_filters_threads_and_is_sent() {
+    async fn hook_code_is_sent_and_only_selected_thread_is_forwarded() {
         let (tmp, mut adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
         adapter.hook_code = Some("/HA8@0".into());
+        adapter.threads.lock().unwrap().selection = Some(vnl_core::HookThreadSelection {
+            name: "GetGlyphOutlineA".into(),
+            hook_code: "HA8@0:gdi32.dll".into(),
+            context: "0".into(),
+            context2: "0".into(),
+        });
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         adapter.start(tx).await.unwrap();
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
@@ -799,6 +899,100 @@ mod tests {
         assert_eq!(st.state, TextSourceState::Failed);
         assert!(st.diagnostics.iter().any(|d| d.contains("Injection failed")), "{:?}", st.diagnostics);
         adapter.stop().await;
+    }
+
+    async fn wait_for(adapter: &LunaHostAdapter, predicate: impl Fn(&SourceStatus) -> bool) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !predicate(&adapter.status()) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unselected_threads_are_previewed_without_forwarding() {
+        let (_tmp, adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.hook_threads.len() == 2).await;
+        assert!(rx.try_recv().is_err());
+        assert_eq!(adapter.status().selected_hook_thread, None);
+        assert_eq!(adapter.status().hook_threads[1].preview, "次の行");
+        adapter.stop().await;
+    }
+
+    #[tokio::test]
+    async fn game_exit_detaches_without_launcher_stop() {
+        let (tmp, adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.hook_threads.len() == 2).await;
+        std::fs::write(tmp.path().join("tasklist.out"), "").unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Inactive).await;
+        assert!(adapter.status().diagnostics.iter().any(|d| d.contains("Game process exited")));
+        let bytes = std::fs::read(tmp.path().join("stdin.bin")).unwrap();
+        let sent = String::from_utf16_lossy(
+            &bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<_>>(),
+        );
+        assert!(sent.contains("detach -P356"));
+        assert!(adapter.select_thread(Some("164:17")).is_err());
+        adapter.stop().await;
+        adapter.stop().await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_host_start_kills_its_process_group() {
+        let (tmp, adapter) = setup("", TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        let ready = tmp.path().join("host.started");
+        std::fs::write(tmp.path().join("host.sh"), format!("touch '{}'\nexec sleep 30\n", ready.display())).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let pgid = adapter.running.lock().unwrap().as_ref().unwrap().pgid.lock().unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(2), adapter.stop()).await.unwrap();
+        assert!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None).is_err());
+        assert!(adapter.select_thread(None).is_err());
+        adapter.stop().await;
+    }
+
+    #[tokio::test]
+    async fn silent_attach_times_out_and_cleans_up() {
+        let (_tmp, adapter) = setup("", TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Failed).await;
+        assert!(adapter.status().diagnostics.iter().any(|d| d.contains("attach timed out")));
+        adapter.stop().await;
+        assert!(adapter.running.lock().unwrap().is_none());
+        assert!(adapter.select_thread(None).is_err());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_hanging_tasklist_before_host_spawn() {
+        let (tmp, adapter) = setup("", TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        let ready = tmp.path().join("tasklist.started");
+        std::fs::write(tmp.path().join("tasklist.sh"), format!("touch '{}'\nexec sleep 30\n", ready.display()))
+            .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_millis(500), adapter.stop()).await.unwrap();
+        assert!(!tmp.path().join("stdin.bin").exists());
+        assert_eq!(adapter.status().state, TextSourceState::Inactive);
     }
 
     #[test]

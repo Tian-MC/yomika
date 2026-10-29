@@ -235,7 +235,15 @@ export interface GraphicsConfig {
 
 export type ExtractionMode = "disabled" | "hook" | "ocr" | "hookAndOcr";
 
+export interface HookThreadSelection {
+  name: string;
+  hookCode: string;
+  context: string;
+  context2: string;
+}
+
 export interface HookConfig {
+  thread: HookThreadSelection | null;
   backend: string | null;
   hookCode: string | null;
   attachDelayMs: number;

@@ -326,6 +326,22 @@ impl TranslationService {
         let _ = initialized.wait_for(|done| *done).await;
     }
 
+    pub async fn select_hook_thread(
+        &self,
+        session_id: &str,
+        id: Option<&str>,
+    ) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
+        let source = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(session_id)
+                .and_then(|e| e.active.as_ref())
+                .and_then(|s| s.hook.clone())
+                .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
+        };
+        source.select_thread(id)
+    }
+
     pub async fn session_status(&self, session_id: &str) -> TranslationSessionStatus {
         {
             let sessions = self.sessions.lock().unwrap();

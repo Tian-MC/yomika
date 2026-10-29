@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { validateGraphics, type Errors } from "../../components/GraphicsEditor";
-import type { AppError, Game, GameSettings } from "../../contract";
+import type { AppError, Game, GameSettings, HookThreadSelection } from "../../contract";
 import type { TFunction } from "../../i18n";
 import { call, normalizeError } from "../../lib/api";
 import { useCommand } from "../../lib/hooks";
@@ -64,6 +64,7 @@ export interface GameSettingsForm {
   saved: GameSettings | null;
   draft: GameSettings | null;
   setDraft: (updater: (d: GameSettings) => GameSettings) => void;
+  syncHookThread: (thread: HookThreadSelection | null) => void;
   files: FilesDraft | null;
   setFiles: (updater: (f: FilesDraft) => FilesDraft) => void;
   dirty: boolean;
@@ -103,6 +104,12 @@ export function useGameSettingsForm(gameId: number, game: Game | undefined, onGa
 
   const setDraft = useCallback((updater: (d: GameSettings) => GameSettings) => setDraftState((d) => (d ? updater(d) : d)), []);
   const setFiles = useCallback((updater: (f: FilesDraft) => FilesDraft) => setFilesState((f) => (f ? updater(f) : f)), []);
+
+  const syncHookThread = (thread: HookThreadSelection | null) => {
+    const patch = (value: GameSettings | null) => value ? { ...value, translation: { ...value.translation, hook: { ...value.translation.hook, thread } } } : value;
+    setSaved(patch);
+    setDraftState(patch);
+  };
 
   const settingsDirty = !!draft && !!saved && JSON.stringify(draft) !== JSON.stringify(saved);
   const filesDirty = !!files && !!savedFiles && JSON.stringify(files) !== JSON.stringify(savedFiles);
@@ -144,6 +151,7 @@ export function useGameSettingsForm(gameId: number, game: Game | undefined, onGa
     saved,
     draft,
     setDraft,
+    syncHookThread,
     files,
     setFiles,
     dirty,

@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Globe, Languages, RefreshCw, ScanText } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { LanguageSelect } from "../../components/pickers";
 import { Button } from "../../components/ui/Button";
@@ -8,7 +8,7 @@ import { NumberField, OptionalTextField, Segmented, SelectField, SwitchRow } fro
 import type { BackendInfo, ExtractionMode, Game, ProviderInfo, TranslationConfig, TranslationLine } from "../../contract";
 import { useT } from "../../i18n";
 import { call } from "../../lib/api";
-import { useCommand } from "../../lib/hooks";
+import { useCommand, useEvent } from "../../lib/hooks";
 import { useAppSettings, useLanguages, useSessions } from "../../state/app";
 import { useToasts } from "../../state/toasts";
 import type { GameSettingsForm } from "./settingsForm";
@@ -56,7 +56,7 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
 
       <fieldset className="fieldset stack gap-lg" disabled={!tr.enabled} aria-label={t("tr.settings")}>
         <Section title={t("tr.languages")} id="tr-langs">
-          {!effectiveTarget && (
+          {!!effectiveProviderId && !effectiveTarget && (
             <Callout tone="warning" role="alert" icon={Languages} title={t("tr.chooseTarget")} action={<Link to="/settings" className="btn btn-secondary btn-sm">{t("tr.openAppSettings")}</Link>}>
               {t("tr.chooseTargetText")}
             </Callout>
@@ -73,7 +73,7 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
               value={tr.targetLanguage}
               onChange={(targetLanguage) => set({ targetLanguage })}
               defaultOptionLabel={appTarget ? t("tr.useAppDefaultNamed", { name: nameFor(appTarget) ?? appTarget }) : t("tr.useAppDefaultUnset")}
-              error={tr.enabled && !effectiveTarget ? t("tr.targetMissing") : null}
+              error={tr.enabled && !!effectiveProviderId && !effectiveTarget ? t("tr.targetMissing") : null}
               hint={effectiveTarget ? t("tr.targetResolved", { name: nameFor(effectiveTarget) ?? effectiveTarget }) : undefined}
             />
           </div>
@@ -175,7 +175,7 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
         </Section>
       </fieldset>
 
-      {session && <SessionTranslationStatus sessionId={session.id} gameId={game.id} />}
+      {session && <SessionTranslationStatus key={session.id} sessionId={session.id} gameId={game.id} form={form} />}
     </div>
   );
 }
@@ -196,12 +196,46 @@ function BackendDiagnostics({ list, selected }: { list: BackendInfo[] | undefine
   );
 }
 
-function SessionTranslationStatus({ sessionId, gameId }: { sessionId: string; gameId: number }) {
+function SessionTranslationStatus({ sessionId, gameId, form }: { sessionId: string; gameId: number; form: GameSettingsForm }) {
   const t = useT();
   const toasts = useToasts();
   const status = useCommand("translation_session_status", { sessionId });
   const [capturing, setCapturing] = useState(false);
   const [last, setLast] = useState<TranslationLine | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const reload = status.reload;
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await reload();
+      if (!disposed) timer = setTimeout(() => void poll(), 1000);
+    };
+    timer = setTimeout(() => void poll(), 1000);
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [reload]);
+  useEvent("vnl://translation", (line) => {
+    if (line.sessionId === sessionId) {
+      setLast((previous) => !previous || line.id === previous.id || line.tsMs > previous.tsMs || (line.tsMs === previous.tsMs && !line.translatedText && !line.error) ? line : previous);
+    }
+  });
+  const chooseThread = async (id: string) => {
+    setSelecting(true);
+    try {
+      const selected = await call("translation_hook_select_thread", { sessionId, gameId, threadId: id || null });
+      if (!mounted.current) return;
+      form.syncHookThread(selected);
+      setLast(null);
+      await reload();
+    } catch (e) {
+      if (mounted.current) toasts.error(e, t("tr.threadFailed"));
+    } finally { if (mounted.current) setSelecting(false); }
+  };
   const tone = (s: string) => (s === "active" ? "success" : s === "failed" ? "danger" : s === "starting" ? "warning" : "neutral");
   return (
     <Section
@@ -238,6 +272,25 @@ function SessionTranslationStatus({ sessionId, gameId }: { sessionId: string; ga
             <Badge tone={tone(status.data.hook)}>{t("tr.hookState", { state: t(`tr.state.${status.data.hook}`) })}</Badge>
             <Badge tone={tone(status.data.ocr)}>{t("tr.ocrState", { state: t(`tr.state.${status.data.ocr}`) })}</Badge>
           </div>
+          {status.data.hook !== "inactive" && (
+            <fieldset className="fieldset stack gap-sm" disabled={selecting || status.data.hook !== "active"}>
+              <SelectField
+                label={t("tr.threads")}
+                value={status.data.selectedHookThread ?? ""}
+                onChange={(id) => void chooseThread(id)}
+                options={[{ value: "", label: t("tr.pauseThread") }, ...status.data.hookThreads.map((thread) => ({ value: thread.id, label: `${thread.id} · ${thread.selector.name} · ${thread.selector.context}:${thread.selector.context2}` }))]}
+                hint={t("tr.threadSaved")}
+              />
+              {status.data.hookThreads.length === 0 && <p className="muted">{t("tr.noThreads")}</p>}
+              {!status.data.selectedHookThread && form.draft?.translation.hook.thread && <p className="muted">{t("tr.waitSavedThread")}</p>}
+              {status.data.hookThreads.map((thread) => (
+                <div key={thread.id}>
+                  <code>{thread.id} · {thread.selector.name} · {thread.selector.hookCode}</code>
+                  <p lang="ja">{thread.preview}</p>
+                </div>
+              ))}
+            </fieldset>
+          )}
           {status.data.diagnostics.length > 0 && (
             <ul className="plain-list muted">
               {status.data.diagnostics.map((d) => (

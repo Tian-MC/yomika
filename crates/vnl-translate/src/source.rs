@@ -30,6 +30,8 @@ pub type TextSender = mpsc::Sender<TextEvent>;
 pub struct SourceStatus {
     pub state: TextSourceState,
     pub diagnostics: Vec<String>,
+    pub hook_threads: Vec<crate::types::HookThread>,
+    pub selected_hook_thread: Option<String>,
 }
 
 /// Shared, cheaply clonable status cell used by source implementations.
@@ -73,4 +75,11 @@ pub trait TextSource: Send + Sync {
     /// Stops background work and kills helper processes. Idempotent.
     async fn stop(&self);
     fn status(&self) -> SourceStatus;
+    fn select_thread(&self, _id: Option<&str>) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
+        Err(AppError::invalid("This source does not expose CLI text threads"))
+    }
+    /// Reject queued events after a thread switch or stop.
+    fn accepts(&self, _event: &TextEvent) -> bool {
+        true
+    }
 }

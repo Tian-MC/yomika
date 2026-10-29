@@ -80,42 +80,61 @@ pub fn parse_tasklist_csv(output: &str) -> Vec<WinProcess> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PidMatch {
     Exact(WinProcess),
-    /// No name match but exactly one non-system process (e.g. a non-ASCII
-    /// exe name mangled by the console code page).
-    SoleCandidate(WinProcess),
-    NotFound {
-        candidates: Vec<WinProcess>,
-    },
+    NotFound { candidates: Vec<WinProcess> },
 }
 
 pub fn find_game(processes: &[WinProcess], exe_name: &str) -> PidMatch {
-    let want = exe_name.to_lowercase();
-    if let Some(p) = processes.iter().rev().find(|p| p.image.to_lowercase() == want) {
-        return PidMatch::Exact(p.clone());
+    let basename = |name: &str| name.rsplit(['/', '\\']).next().unwrap_or(name).to_lowercase();
+    let want = basename(exe_name);
+    let matches: Vec<_> = processes.iter().filter(|p| basename(&p.image) == want).collect();
+    if matches.len() == 1 {
+        return PidMatch::Exact(matches[0].clone());
     }
-    let candidates: Vec<WinProcess> =
+    let candidates =
         processes.iter().filter(|p| !SYSTEM_IMAGES.contains(&p.image.to_lowercase().as_str())).cloned().collect();
-    if candidates.len() == 1 {
-        PidMatch::SoleCandidate(candidates[0].clone())
-    } else {
-        PidMatch::NotFound { candidates }
-    }
+    PidMatch::NotFound { candidates }
 }
 
 pub fn tasklist_command(prefix: &dyn PrefixCommandBuilder) -> Result<CommandSpec, AppError> {
     prefix.build(Path::new("tasklist.exe"), &["/fo".to_string(), "csv".to_string(), "/nh".to_string()], None)
 }
 
+// A cancelled Proton helper can leave children even when kill_on_drop kills its launcher.
+struct HelperGroup(u32);
+impl Drop for HelperGroup {
+    fn drop(&mut self) {
+        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(self.0 as i32), nix::sys::signal::Signal::SIGKILL);
+    }
+}
+
+fn decode_tasklist(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.iter().take(64).any(|b| *b == 0) {
+        String::from_utf16_lossy(&bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<_>>())
+            .trim_start_matches('\u{FEFF}')
+            .to_string()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
 /// Runs `tasklist.exe` in the prefix.
 pub async fn list_windows_processes(prefix: &dyn PrefixCommandBuilder) -> Result<Vec<WinProcess>, AppError> {
     let spec = tasklist_command(prefix)?;
     let mut cmd = tokio::process::Command::from(spec.to_std_command());
-    cmd.stdin(std::process::Stdio::null()).kill_on_drop(true);
-    let out = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .process_group(0);
+    let child = cmd
+        .spawn()
+        .map_err(|e| AppError::new(ErrorCode::Process, format!("cannot run tasklist.exe in the prefix: {e}")))?;
+    let _group = HelperGroup(child.id().expect("new child has a PID"));
+    let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
         .await
         .map_err(|_| AppError::new(ErrorCode::Process, "tasklist.exe timed out in the game prefix"))?
         .map_err(|e| AppError::new(ErrorCode::Process, format!("cannot run tasklist.exe in the prefix: {e}")))?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = decode_tasklist(&out.stdout);
     let procs = parse_tasklist_csv(&text);
     if procs.is_empty() && !out.status.success() {
         return Err(AppError::new(ErrorCode::Process, format!("tasklist.exe failed ({})", out.status))
@@ -169,11 +188,23 @@ mod tests {
             find_game(&procs, "NOTEPAD.EXE"),
             PidMatch::Exact(WinProcess { image: "notepad.exe".into(), pid: 356 })
         );
-        // Mangled non-ASCII name: falls back to the only non-system process.
-        assert!(matches!(find_game(&procs, "ゲーム.exe"), PidMatch::SoleCandidate(p) if p.pid == 356));
+        assert_eq!(find_game(&procs, r"Z:\games\NOTEPAD.EXE"), find_game(&procs, "notepad.exe"));
+        let mut ambiguous = procs.clone();
+        ambiguous.push(WinProcess { image: "notepad.exe".into(), pid: 999 });
+        assert!(matches!(find_game(&ambiguous, "notepad.exe"), PidMatch::NotFound { .. }));
+        // Never inject an unrelated sole candidate when the name is mangled.
+        assert!(matches!(find_game(&procs, "ゲーム.exe"), PidMatch::NotFound { .. }));
         let mut two = procs.clone();
         two.push(WinProcess { image: "other.exe".into(), pid: 400 });
         assert!(matches!(find_game(&two, "game.exe"), PidMatch::NotFound { candidates } if candidates.len() == 2));
+    }
+
+    #[test]
+    fn decodes_utf16_tasklist_without_using_linux_pids() {
+        let sample = "\u{FEFF}\"ゲーム.exe\",\"356\",\"Console\"\n";
+        let bytes = super::super::protocol::encode_utf16le(sample);
+        let procs = parse_tasklist_csv(&decode_tasklist(&bytes));
+        assert!(matches!(find_game(&procs, "ゲーム.exe"), PidMatch::Exact(p) if p.pid == 356));
     }
 
     #[test]

@@ -62,7 +62,7 @@ export function defaultTranslationConfig(): TranslationConfig {
     sourceLanguage: null,
     targetLanguage: null,
     providerId: null,
-    hook: { backend: null, hookCode: null, attachDelayMs: 0 },
+    hook: { thread: null, backend: null, hookCode: null, attachDelayMs: 0 },
     ocr: { backend: null, region: null, intervalMs: 0 },
     keepHistory: true,
     overlay: defaultOverlayConfig(),

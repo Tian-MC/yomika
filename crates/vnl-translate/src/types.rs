@@ -183,17 +183,30 @@ pub enum TextSourceState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HookThread {
+    pub id: String,
+    pub selector: vnl_core::HookThreadSelection,
+    pub preview: String,
+    pub received: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TranslationSessionStatus {
     pub session_id: SessionId,
     pub hook: TextSourceState,
     pub ocr: TextSourceState,
     pub diagnostics: Vec<String>,
+    pub hook_threads: Vec<HookThread>,
+    pub selected_hook_thread: Option<String>,
 }
 
 impl TranslationSessionStatus {
     pub fn inactive(session_id: &str) -> Self {
         Self {
             session_id: session_id.to_string(),
+            hook_threads: Vec::new(),
+            selected_hook_thread: None,
             hook: TextSourceState::Inactive,
             ocr: TextSourceState::Inactive,
             diagnostics: Vec::new(),

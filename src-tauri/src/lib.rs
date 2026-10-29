@@ -93,6 +93,7 @@ pub fn run() {
             commands::translation::translation_ocr_capture,
             commands::translation::translation_hook_backends,
             commands::translation::translation_session_status,
+            commands::translation::translation_hook_select_thread,
             commands::translation::overlay_show,
             commands::translation::overlay_hide,
         ])

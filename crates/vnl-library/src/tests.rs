@@ -216,6 +216,39 @@ fn playtime_recording() {
 }
 
 #[test]
+fn hook_thread_selection_persists_per_game_without_migration() {
+    let e = env();
+    let first = import(&e.lib, "First", &make_exe(&e.root, "first.exe"));
+    let second = import(&e.lib, "Second", &make_exe(&e.root, "second.exe"));
+    let mut settings = e.lib.get_settings(first.id).unwrap();
+    let original = settings.clone();
+    let schema: i64 = e.lib.conn().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    settings.translation.hook.thread = Some(vnl_core::HookThreadSelection {
+        name: "Engine".into(),
+        hook_code: "HS4@0:Game.exe".into(),
+        context: "FFFFFFFFFFFFFFFF".into(),
+        context2: "0".into(),
+    });
+    e.lib.save_settings(first.id, &settings).unwrap();
+    let reopened = Library::open(&e.paths).unwrap();
+    assert_eq!(reopened.get_settings(first.id).unwrap(), settings);
+    assert_eq!(reopened.get_settings(second.id).unwrap(), original);
+    let after: i64 = reopened.conn().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(schema, after);
+    // Legacy JSON without a selection loads as paused.
+    let mut legacy = serde_json::to_value(&settings).unwrap();
+    legacy["translation"]["hook"].as_object_mut().unwrap().remove("thread");
+    e.lib
+        .conn()
+        .execute(
+            "UPDATE game_settings SET settings = ?1 WHERE game_id = ?2",
+            rusqlite::params![legacy.to_string(), first.id],
+        )
+        .unwrap();
+    assert!(reopened.get_settings(first.id).unwrap().translation.hook.thread.is_none());
+}
+
+#[test]
 fn settings_defaults_and_tolerance() {
     let e = env();
     let mut app = AppSettings::default();

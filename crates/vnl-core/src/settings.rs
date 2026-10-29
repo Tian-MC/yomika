@@ -245,6 +245,16 @@ pub enum ExtractionMode {
     HookAndOcr,
 }
 
+/// Stable CLI fingerprint, excluding process IDs, handles and hook addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookThreadSelection {
+    pub name: String,
+    pub hook_code: String,
+    pub context: String,
+    pub context2: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HookConfig {
@@ -253,6 +263,7 @@ pub struct HookConfig {
     /// Optional H-code / hook code.
     pub hook_code: Option<String>,
     pub attach_delay_ms: u64,
+    pub thread: Option<HookThreadSelection>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

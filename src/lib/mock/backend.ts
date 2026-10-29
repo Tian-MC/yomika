@@ -858,7 +858,14 @@ const handlers: Handlers = {
     const t = getSettings(s.gameId).translation;
     const hook = t.enabled && (t.extraction === "hook" || t.extraction === "hookAndOcr") ? "active" : "inactive";
     const ocr = t.enabled && (t.extraction === "ocr" || t.extraction === "hookAndOcr") ? "active" : "inactive";
-    return { sessionId, hook, ocr, diagnostics: t.enabled ? [] : ["Translation is disabled for this game."] };
+    return { sessionId, hook, ocr, hookThreads: [], selectedHookThread: null, diagnostics: t.enabled ? [] : ["Translation is disabled for this game."] };
+  },
+  translation_hook_select_thread: ({ sessionId, gameId, threadId }) => {
+    const session = state.sessions.get(sessionId);
+    if (!session || session.gameId !== gameId || (session.state !== "running" && session.state !== "starting")) fail("invalidInput", "Session is not active");
+    if (threadId) fail("notFound", "No CLI text threads in demo mode");
+    getSettings(gameId).translation.hook.thread = null;
+    return null;
   },
   overlay_show: ({ config }) => {
     const gameCfg = config ?? defaultGameSettings(state.app).translation.overlay;

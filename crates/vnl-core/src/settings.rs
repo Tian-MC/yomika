@@ -157,6 +157,8 @@ pub enum GamescopeFilter {
     Fsr,
     Nis,
     Pixel,
+    /// Snapdragon Game Super Resolution (gamescope >= 3.16).
+    Sgsr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -206,6 +208,8 @@ pub struct UpscalerConfig {
     pub model: Option<String>,
     pub preset: Option<String>,
     pub scale: Option<f32>,
+    /// Title of the game window to attach to (RT-Upscaler `-t`).
+    pub target_title: Option<String>,
     pub extra_args: Vec<String>,
 }
 

@@ -149,7 +149,11 @@ impl RuntimeService {
         Self::with_options(paths, events, RuntimeOptions::detect(paths))
     }
 
-    pub fn with_options(paths: &AppPaths, events: Arc<dyn EventSink>, options: RuntimeOptions) -> Result<Self, AppError> {
+    pub fn with_options(
+        paths: &AppPaths,
+        events: Arc<dyn EventSink>,
+        options: RuntimeOptions,
+    ) -> Result<Self, AppError> {
         let (prefixes, warning) = PrefixRegistry::load(&paths.data_dir.join("prefixes.json"))?;
         if let Some(w) = warning {
             events.log(LogEntry::new(LogLevel::Warn, "runtime", w));
@@ -224,7 +228,11 @@ impl RuntimeService {
     }
 
     /// Pick `preferred`, else `fallback`, else the best available runner.
-    pub fn resolve_runner(&self, preferred: Option<&RunnerRef>, fallback: Option<&RunnerRef>) -> Result<Runner, AppError> {
+    pub fn resolve_runner(
+        &self,
+        preferred: Option<&RunnerRef>,
+        fallback: Option<&RunnerRef>,
+    ) -> Result<Runner, AppError> {
         let list = self.list_runners();
         for wanted in [preferred, fallback].into_iter().flatten() {
             if let Some(r) = list.iter().find(|r| r.id == wanted.id) {
@@ -277,8 +285,64 @@ impl RuntimeService {
                 if let Some(p) = self.prefixes.find_by_path(path) {
                     return Ok(p);
                 }
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "prefix".into());
+                let name =
+                    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "prefix".into());
                 self.register_prefix(RegisterPrefixRequest { name, path: path.clone() })
+            }
+        }
+    }
+
+    /// Read-only lookup of the prefix a game would use. Never creates or
+    /// registers anything. For an unregistered dedicated prefix the
+    /// conventional managed location is returned only if its directory exists;
+    /// an unregistered custom path is returned (as External) only if it exists.
+    pub fn prefix_for_game(&self, game: &Game, choice: &PrefixChoice) -> Result<Option<PrefixInfo>, AppError> {
+        match choice {
+            PrefixChoice::Dedicated => {
+                if let Some(p) = self.prefixes.find_dedicated(game.id) {
+                    return Ok(Some(p));
+                }
+                let id = format!("game-{}", game.id);
+                let path = self.paths.prefixes_dir().join(&id);
+                if !path.is_dir() {
+                    return Ok(None);
+                }
+                let mut info = PrefixInfo {
+                    arch: prefixes::detect_arch(&path.join("pfx")).unwrap_or_default(),
+                    id,
+                    name: game.title.clone(),
+                    path,
+                    kind: PrefixKind::Dedicated { game_id: game.id },
+                    runner_id: None,
+                    created_at: 0,
+                    managed: true,
+                    initialized: false,
+                };
+                info.initialized = prefixes::is_initialized(&info);
+                Ok(Some(info))
+            }
+            PrefixChoice::Shared { id } => Ok(self.prefixes.get(id)),
+            PrefixChoice::Custom { path } => {
+                if let Some(p) = self.prefixes.find_by_path(path) {
+                    return Ok(Some(p));
+                }
+                if !path.is_dir() {
+                    return Ok(None);
+                }
+                let mut info = PrefixInfo {
+                    id: String::new(),
+                    name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    path: prefixes::canonical(path),
+                    arch: PrefixArch::Win64,
+                    kind: PrefixKind::External,
+                    runner_id: None,
+                    created_at: 0,
+                    managed: false,
+                    initialized: false,
+                };
+                info.arch = prefixes::detect_arch(&prefixes::wine_prefix_dir(&info)).unwrap_or_default();
+                info.initialized = prefixes::is_initialized(&info);
+                Ok(Some(info))
             }
         }
     }

@@ -71,7 +71,8 @@ impl RuntimeService {
     /// Initialise a prefix with `wineboot -u` and wait for its wineserver.
     async fn init_prefix(&self, runner: &Runner, prefix: &PrefixInfo) -> Result<(), AppError> {
         self.prepare_prefix(runner, prefix)?;
-        let spec = self.helper_command(Path::new("wineboot"), &["-u".into()], runner, prefix, ProtonVerb::Run, false)?;
+        let spec =
+            self.helper_command(Path::new("wineboot"), &["-u".into()], runner, prefix, ProtonVerb::Run, false)?;
         let target = self.target();
         let status = process::run_to_completion(&spec, self.flatpak, "prefix.init", &target, INIT_TIMEOUT).await?;
         if let Some(ws) = command::wineserver_command(runner, prefix, "-w") {
@@ -274,12 +275,9 @@ impl RuntimeService {
             }
             match result {
                 Ok(status) if status.success() => service.task(&task_id, &label, TaskState::Done, None),
-                Ok(status) => service.task(
-                    &task_id,
-                    &label,
-                    TaskState::Failed,
-                    Some(format!("installer exited with {status}")),
-                ),
+                Ok(status) => {
+                    service.task(&task_id, &label, TaskState::Failed, Some(format!("installer exited with {status}")))
+                }
                 Err(e) => service.task(&task_id, &label, TaskState::Failed, Some(e.message)),
             }
         });

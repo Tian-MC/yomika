@@ -409,9 +409,9 @@ pub fn best_runner(runners: &[Runner]) -> Option<&Runner> {
 
 pub fn load_custom_runners(file: &Path) -> Result<Vec<CustomRunner>, AppError> {
     match std::fs::read_to_string(file) {
-        Ok(s) => serde_json::from_str::<CustomRunnersFile>(&s)
-            .map(|f| f.runners)
-            .map_err(|e| AppError::new(ErrorCode::Io, format!("invalid {}", file.display())).with_details(e.to_string())),
+        Ok(s) => serde_json::from_str::<CustomRunnersFile>(&s).map(|f| f.runners).map_err(|e| {
+            AppError::new(ErrorCode::Io, format!("invalid {}", file.display())).with_details(e.to_string())
+        }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
     }
@@ -425,9 +425,14 @@ pub fn save_custom_runners(file: &Path, runners: &[CustomRunner]) -> Result<(), 
 
 /// Validate a user-supplied runner path and build its [`CustomRunner`] entry.
 /// Accepts a Proton directory, a Wine build directory (`bin/wine`) or a `wine` binary.
-pub fn inspect_custom_runner(path: &Path, name: Option<&str>, existing: &[CustomRunner]) -> Result<CustomRunner, AppError> {
-    let canonical = std::fs::canonicalize(path)
-        .map_err(|e| AppError::not_found(format!("runner path not found: {}", path.display())).with_details(e.to_string()))?;
+pub fn inspect_custom_runner(
+    path: &Path,
+    name: Option<&str>,
+    existing: &[CustomRunner],
+) -> Result<CustomRunner, AppError> {
+    let canonical = std::fs::canonicalize(path).map_err(|e| {
+        AppError::not_found(format!("runner path not found: {}", path.display())).with_details(e.to_string())
+    })?;
     let (kind, runner_path) = if canonical.is_dir() && canonical.join("proton").is_file() {
         (RunnerKind::Proton, canonical.clone())
     } else if canonical.is_dir() && canonical.join("bin/wine").is_file() {

@@ -41,11 +41,17 @@ pub enum FsrSupport {
 
 /// Candidate `win32u.so` locations for a runner.
 pub fn win32u_candidates(runner: &Runner) -> Vec<PathBuf> {
-    let rel = ["lib/wine/x86_64-unix/win32u.so", "lib64/wine/x86_64-unix/win32u.so", "lib/x86_64-linux-gnu/wine/x86_64-unix/win32u.so"];
+    let rel = [
+        "lib/wine/x86_64-unix/win32u.so",
+        "lib64/wine/x86_64-unix/win32u.so",
+        "lib/x86_64-linux-gnu/wine/x86_64-unix/win32u.so",
+    ];
     let roots: Vec<PathBuf> = match runner.kind {
         RunnerKind::Proton => vec![runner.path.join("files"), runner.path.join("dist")],
         // `.../bin/wine` -> `...`
-        RunnerKind::Wine => runner.path.parent().and_then(Path::parent).map(|p| vec![p.to_path_buf()]).unwrap_or_default(),
+        RunnerKind::Wine => {
+            runner.path.parent().and_then(Path::parent).map(|p| vec![p.to_path_buf()]).unwrap_or_default()
+        }
         RunnerKind::Native => Vec::new(),
     };
     roots.iter().flat_map(|r| rel.iter().map(move |p| r.join(p))).collect()
@@ -77,7 +83,11 @@ pub struct WineFsrResult {
 
 /// Add the Wine FSR variables to `command` (if enabled) and report problems.
 /// `runner` may be `None` for previews without a runner.
-pub fn apply(cfg: &WineFsrConfig, command: &mut CommandSpec, runner: Option<&Runner>) -> Result<WineFsrResult, AppError> {
+pub fn apply(
+    cfg: &WineFsrConfig,
+    command: &mut CommandSpec,
+    runner: Option<&Runner>,
+) -> Result<WineFsrResult, AppError> {
     let mut out = WineFsrResult::default();
     if !cfg.enabled {
         return Ok(out);
@@ -124,7 +134,8 @@ mod tests {
         if let Some(fsr) = with_fsr {
             let lib = dir.join("files/lib/wine/x86_64-unix");
             std::fs::create_dir_all(&lib).unwrap();
-            let body: &[u8] = if fsr { b"\x7fELF....WINE_FULLSCREEN_FSR_STRENGTH\0..." } else { b"\x7fELF....nothing\0" };
+            let body: &[u8] =
+                if fsr { b"\x7fELF....WINE_FULLSCREEN_FSR_STRENGTH\0..." } else { b"\x7fELF....nothing\0" };
             std::fs::write(lib.join("win32u.so"), body).unwrap();
         }
         Runner {
@@ -151,7 +162,8 @@ mod tests {
         apply(&WineFsrConfig { enabled: true, strength: None }, &mut cmd, Some(&r)).unwrap();
         assert!(!cmd.env.contains_key("WINE_FULLSCREEN_FSR_STRENGTH"));
 
-        let e = apply(&WineFsrConfig { enabled: true, strength: Some(6) }, &mut CommandSpec::new("x"), Some(&r)).unwrap_err();
+        let e = apply(&WineFsrConfig { enabled: true, strength: Some(6) }, &mut CommandSpec::new("x"), Some(&r))
+            .unwrap_err();
         assert!(e.message.contains("between 0"));
 
         let mut cmd = CommandSpec::new("x");
@@ -164,16 +176,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tkg = proton_runner(dir.path(), "Proton-Tkg-928", Some(false));
         assert_eq!(detect_support(&tkg), FsrSupport::Unsupported);
-        let w = apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&tkg)).unwrap();
+        let w =
+            apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&tkg)).unwrap();
         assert!(w.warnings[0].contains("does not include"));
 
         let unknown_dir = tempfile::tempdir().unwrap();
         let ge = proton_runner(unknown_dir.path(), "GE-Proton9-20", None);
         assert_eq!(detect_support(&ge), FsrSupport::Unknown);
-        assert!(apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&ge)).unwrap().warnings.is_empty());
+        assert!(
+            apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&ge))
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
 
         let valve = proton_runner(unknown_dir.path(), "Proton 9.0", None);
-        let w = apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&valve)).unwrap();
+        let w =
+            apply(&WineFsrConfig { enabled: true, strength: None }, &mut CommandSpec::new("x"), Some(&valve)).unwrap();
         assert!(w.warnings[0].contains("does not look like a Proton-GE"));
     }
 

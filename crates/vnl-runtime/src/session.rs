@@ -357,11 +357,7 @@ impl Session {
         Ok(info)
     }
 
-    async fn monitor(
-        self: Arc<Self>,
-        mut child: tokio::process::Child,
-        pumps: Vec<tokio::task::JoinHandle<()>>,
-    ) {
+    async fn monitor(self: Arc<Self>, mut child: tokio::process::Child, pumps: Vec<tokio::task::JoinHandle<()>>) {
         let status = child.wait().await;
         self.game_exited.send_replace(true);
         for p in pumps {
@@ -443,7 +439,8 @@ impl Session {
         {
             let aux = self.aux_groups.lock().unwrap();
             for (id, pgid) in aux.iter() {
-                let stop_with_game = self.aux_defs.iter().find(|(p, _)| &p.id == id).is_none_or(|(p, _)| p.stop_with_game);
+                let stop_with_game =
+                    self.aux_defs.iter().find(|(p, _)| &p.id == id).is_none_or(|(p, _)| p.stop_with_game);
                 if stop_with_game {
                     groups.push(*pgid);
                 }
@@ -502,7 +499,8 @@ impl Session {
                 while tokio::time::Instant::now() < deadline && leftovers.iter().any(|p| process::pid_alive(*p)) {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
-                process::send_pids(&leftovers, Signal::SIGKILL);
+                let alive: Vec<i32> = leftovers.iter().copied().filter(|p| process::pid_alive(*p)).collect();
+                process::send_pids(&alive, Signal::SIGKILL);
             }
         }
 

@@ -86,12 +86,13 @@ pub fn filter_value(f: GamescopeFilter) -> &'static str {
         GamescopeFilter::Fsr => "fsr",
         GamescopeFilter::Nis => "nis",
         GamescopeFilter::Pixel => "pixel",
+        GamescopeFilter::Sgsr => "sgsr",
     }
 }
 
 /// Filters that only change anything when gamescope actually upscales.
 pub fn is_upscaling_filter(f: GamescopeFilter) -> bool {
-    matches!(f, GamescopeFilter::Fsr | GamescopeFilter::Nis | GamescopeFilter::Pixel)
+    matches!(f, GamescopeFilter::Fsr | GamescopeFilter::Nis | GamescopeFilter::Pixel | GamescopeFilter::Sgsr)
 }
 
 fn pair(name: &str, w: Option<u32>, h: Option<u32>) -> Result<Option<(u32, u32)>, AppError> {
@@ -113,7 +114,8 @@ fn pair(name: &str, w: Option<u32>, h: Option<u32>) -> Result<Option<(u32, u32)>
 
 fn valid_connector_list(s: &str) -> bool {
     !s.is_empty()
-        && s.split(',').all(|c| !c.is_empty() && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '*'))
+        && s.split(',')
+            .all(|c| !c.is_empty() && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '*'))
 }
 
 /// Build the gamescope wrapper arguments (without the program name).
@@ -130,7 +132,8 @@ pub fn build_args(cfg: &GamescopeConfig, ctx: &GamescopeContext) -> Result<Games
     if let Some((w, h)) = output {
         args.extend(["-W".into(), w.to_string(), "-H".into(), h.to_string()]);
     }
-    for (flag, label, v) in [("-r", "fps limit", cfg.fps_limit), ("-o", "unfocused fps limit", cfg.fps_limit_unfocused)] {
+    for (flag, label, v) in [("-r", "fps limit", cfg.fps_limit), ("-o", "unfocused fps limit", cfg.fps_limit_unfocused)]
+    {
         if let Some(v) = v {
             if v == 0 || v > 1000 {
                 return Err(AppError::invalid(format!("gamescope {label} must be between 1 and 1000 (got {v})")));
@@ -308,9 +311,31 @@ mod tests {
         assert_eq!(
             args(&c),
             [
-                "-w", "1280", "-h", "720", "-W", "2560", "-H", "1440", "-r", "60", "-o", "10", "-f", "-S", "fit", "-F",
-                "fsr", "--sharpness", "5", "--prefer-output", "DP-8", "--force-grab-cursor", "--hdr-enabled",
-                "--adaptive-sync", "--"
+                "-w",
+                "1280",
+                "-h",
+                "720",
+                "-W",
+                "2560",
+                "-H",
+                "1440",
+                "-r",
+                "60",
+                "-o",
+                "10",
+                "-f",
+                "-S",
+                "fit",
+                "-F",
+                "fsr",
+                "--sharpness",
+                "5",
+                "--prefer-output",
+                "DP-8",
+                "--force-grab-cursor",
+                "--hdr-enabled",
+                "--adaptive-sync",
+                "--"
             ]
         );
     }
@@ -328,7 +353,10 @@ mod tests {
             ..cfg()
         };
         let r = build_args(&c, &ctx()).unwrap();
-        assert_eq!(r.args, ["-w", "800", "-h", "600", "-W", "1600", "-H", "1200", "-b", "-S", "integer", "-F", "nearest", "--"]);
+        assert_eq!(
+            r.args,
+            ["-w", "800", "-h", "600", "-W", "1600", "-H", "1200", "-b", "-S", "integer", "-F", "nearest", "--"]
+        );
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     }
 
@@ -346,7 +374,23 @@ mod tests {
         };
         assert_eq!(
             args(&c),
-            ["-w", "1024", "-h", "768", "-W", "1920", "-H", "1080", "-S", "stretch", "-F", "nis", "--sharpness", "0", "--"]
+            [
+                "-w",
+                "1024",
+                "-h",
+                "768",
+                "-W",
+                "1920",
+                "-H",
+                "1080",
+                "-S",
+                "stretch",
+                "-F",
+                "nis",
+                "--sharpness",
+                "0",
+                "--"
+            ]
         );
     }
 
@@ -402,12 +446,8 @@ mod tests {
             ..cfg()
         };
         assert!(build_args(&same, &ctx()).unwrap().warnings.iter().any(|w| w.contains("no effect")));
-        let windowed = GamescopeConfig {
-            filter: GamescopeFilter::Fsr,
-            game_width: Some(1280),
-            game_height: Some(720),
-            ..cfg()
-        };
+        let windowed =
+            GamescopeConfig { filter: GamescopeFilter::Fsr, game_width: Some(1280), game_height: Some(720), ..cfg() };
         assert!(build_args(&windowed, &ctx()).unwrap().warnings.iter().any(|w| w.contains("-W/-H")));
         let fullscreen = GamescopeConfig { window_mode: WindowMode::Fullscreen, ..windowed };
         assert!(build_args(&fullscreen, &ctx()).unwrap().warnings.is_empty());
@@ -444,7 +484,10 @@ mod tests {
     fn extra_args_cannot_contain_separator() {
         let c = GamescopeConfig { extra_args: vec!["--".into(), "evil".into()], ..cfg() };
         assert!(build_args(&c, &ctx()).is_err());
-        let c = GamescopeConfig { extra_args: vec!["--mangoapp".into(), "--prefer-vk-device".into(), "10de:2d04".into()], ..cfg() };
+        let c = GamescopeConfig {
+            extra_args: vec!["--mangoapp".into(), "--prefer-vk-device".into(), "10de:2d04".into()],
+            ..cfg()
+        };
         assert_eq!(args(&c), ["--mangoapp", "--prefer-vk-device", "10de:2d04", "--"]);
     }
 }

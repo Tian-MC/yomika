@@ -107,7 +107,8 @@ mod tests {
         let r = dir.path();
         std::fs::create_dir_all(r.join("etc")).unwrap();
         std::fs::create_dir_all(r.join("proc/sys/kernel")).unwrap();
-        std::fs::write(r.join("etc/os-release"), "PRETTY_NAME=\"Fedora Linux 43 (Workstation Edition)\"\nID=fedora\n").unwrap();
+        std::fs::write(r.join("etc/os-release"), "PRETTY_NAME=\"Fedora Linux 43 (Workstation Edition)\"\nID=fedora\n")
+            .unwrap();
         std::fs::write(r.join("proc/sys/kernel/osrelease"), "7.2.11-zen1-1-zen\n").unwrap();
         std::fs::write(
             r.join("proc/cpuinfo"),

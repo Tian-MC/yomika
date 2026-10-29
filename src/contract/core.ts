@@ -186,7 +186,7 @@ export interface RuntimeConfig {
 
 export type WindowMode = "windowed" | "fullscreen" | "borderless";
 export type GamescopeScaler = "auto" | "integer" | "fit" | "fill" | "stretch";
-export type GamescopeFilter = "linear" | "nearest" | "fsr" | "nis" | "pixel";
+export type GamescopeFilter = "linear" | "nearest" | "fsr" | "nis" | "pixel" | "sgsr";
 
 export interface GamescopeConfig {
   enabled: boolean;
@@ -218,6 +218,8 @@ export interface UpscalerConfig {
   model: string | null;
   preset: string | null;
   scale: number | null;
+  /** Title of the game window to attach to (RT-Upscaler -t). */
+  targetTitle: string | null;
   extraArgs: string[];
 }
 

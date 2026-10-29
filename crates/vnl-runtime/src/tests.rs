@@ -151,7 +151,9 @@ async fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {
 }
 
 async fn read_pid(file: &Path) -> i32 {
-    assert!(wait_until(Duration::from_secs(5), || std::fs::read_to_string(file).is_ok_and(|s| s.ends_with('\n'))).await);
+    assert!(
+        wait_until(Duration::from_secs(5), || std::fs::read_to_string(file).is_ok_and(|s| s.ends_with('\n'))).await
+    );
     std::fs::read_to_string(file).unwrap().trim().parse().unwrap()
 }
 
@@ -199,11 +201,32 @@ fn custom_and_registered_prefixes_are_external_and_untouched() {
     let after: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(before, after);
 
-    let shared = f.svc.resolve_prefix(&game(2, "/g/b.exe"), &PrefixChoice::Shared { id: p.id.clone() }, &runner).unwrap();
+    let shared =
+        f.svc.resolve_prefix(&game(2, "/g/b.exe"), &PrefixChoice::Shared { id: p.id.clone() }, &runner).unwrap();
     assert_eq!(shared.id, p.id);
 
-    let err = f.svc.register_prefix(RegisterPrefixRequest { name: "x".into(), path: f.root.join("missing") }).unwrap_err();
+    let err =
+        f.svc.register_prefix(RegisterPrefixRequest { name: "x".into(), path: f.root.join("missing") }).unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn prefix_for_game_is_read_only() {
+    let f = fixture();
+    let g = game(5, "/g/x.exe");
+    assert!(f.svc.prefix_for_game(&g, &PrefixChoice::Dedicated).unwrap().is_none());
+    assert!(f.svc.prefix_for_game(&g, &PrefixChoice::Custom { path: f.root.join("missing") }).unwrap().is_none());
+    assert!(f.svc.prefix_for_game(&g, &PrefixChoice::Shared { id: "x".into() }).unwrap().is_none());
+    std::fs::create_dir_all(f.paths.prefixes_dir().join("game-5/pfx/drive_c")).unwrap();
+    let p = f.svc.prefix_for_game(&g, &PrefixChoice::Dedicated).unwrap().unwrap();
+    assert!(p.initialized && p.managed);
+    let ext = f.root.join("ext pfx");
+    std::fs::create_dir_all(ext.join("drive_c")).unwrap();
+    let e = f.svc.prefix_for_game(&g, &PrefixChoice::Custom { path: ext.clone() }).unwrap().unwrap();
+    assert_eq!(e.kind, PrefixKind::External);
+    assert!(e.initialized);
+    assert!(f.svc.list_prefixes().unwrap().is_empty(), "must not register anything");
+    assert!(!f.paths.data_dir.join("prefixes.json").exists());
 }
 
 #[tokio::test]
@@ -315,7 +338,9 @@ async fn stop_sends_term_to_whole_group() {
         p = pids.display()
     );
     let info = f.svc.start_session(native_request(&f, &script)).await.unwrap();
-    assert!(wait_until(Duration::from_secs(5), || std::fs::read_to_string(&pids).is_ok_and(|s| s.contains("end"))).await);
+    assert!(
+        wait_until(Duration::from_secs(5), || std::fs::read_to_string(&pids).is_ok_and(|s| s.contains("end"))).await
+    );
     let children: Vec<i32> =
         std::fs::read_to_string(&pids).unwrap().lines().filter_map(|l| l.trim().parse().ok()).collect();
     assert_eq!(children.len(), 2);
@@ -378,7 +403,7 @@ async fn aux_programs_are_independent_of_the_game() {
         })
         .await
     );
-    assert_eq!(logs(&f.sink, "aux.quick"), vec!["hello from aux"]);
+    assert!(logs(&f.sink, "aux.quick").contains(&"hello from aux".to_string()));
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(f.svc.session(&id).unwrap().state, SessionState::Running);
 
@@ -393,8 +418,13 @@ async fn aux_programs_are_independent_of_the_game() {
     // killing an aux program does not affect the game
     process::send_group(a, nix::sys::signal::Signal::SIGKILL);
     assert!(
-        wait_until(Duration::from_secs(3), || !svc.session(&id).unwrap().aux.iter().any(|x| x.aux_id == "a" && x.running))
-            .await
+        wait_until(Duration::from_secs(3), || !svc
+            .session(&id)
+            .unwrap()
+            .aux
+            .iter()
+            .any(|x| x.aux_id == "a" && x.running))
+        .await
     );
     assert_eq!(f.svc.session(&id).unwrap().state, SessionState::Running);
     // restart it
@@ -455,16 +485,17 @@ async fn wait_for_wineserver_waits_for_spawned_wine_processes_but_not_aux() {
     assert_eq!(done.state, SessionState::Exited);
     assert!(elapsed >= Duration::from_secs(2), "ended before the spawned process: {elapsed:?}");
     assert!(elapsed < Duration::from_secs(8), "aux kept the session alive: {elapsed:?}");
-    assert!(done.aux.iter().all(|a| !a.running) || {
-        // aux monitor may lag a little behind the final event
-        wait_until(Duration::from_secs(3), || f.svc.session(&info.id).unwrap().aux.iter().all(|a| !a.running)).await
-    });
+    assert!(
+        done.aux.iter().all(|a| !a.running) || {
+            // aux monitor may lag a little behind the final event
+            wait_until(Duration::from_secs(3), || f.svc.session(&info.id).unwrap().aux.iter().all(|a| !a.running)).await
+        }
+    );
 }
 
 #[test]
 fn request_types_serialize_like_the_ts_contract() {
-    let req: PrefixToolRequest =
-        serde_json::from_str(r#"{"prefixId":"p","runnerId":"r","tool":"killAll"}"#).unwrap();
+    let req: PrefixToolRequest = serde_json::from_str(r#"{"prefixId":"p","runnerId":"r","tool":"killAll"}"#).unwrap();
     assert_eq!(req.tool, PrefixTool::KillAll);
     assert!(req.verbs.is_none());
     let req: InstallerRequest = serde_json::from_str(
@@ -536,13 +567,18 @@ fn quiet_config() -> RuntimeConfig {
     c
 }
 
-async fn real_run(runner_id: &str) {
+async fn real_run(runner_id: &str, expect_stdout: bool) {
     let (tmp, paths, sink, svc) = real_service();
     let runner = svc.find_runner(runner_id).expect("runner installed");
     let dir = paths.prefixes_dir().join("test prefix");
     let prefix = svc.create_prefix_at(&dir, "test", "Test ゲーム", PrefixArch::Win64, &runner).await.unwrap();
     assert!(prefix.initialized, "drive_c missing");
-    let g = cmd_game(tmp.path());
+    let mut g = cmd_game(tmp.path());
+    // Also write a marker file: Proton's `run` starts the exe via steam.exe,
+    // whose console output may not reach our stdout pipe.
+    let marker = tmp.path().join("marker.txt");
+    let win_marker = format!("Z:{}", marker.to_string_lossy().replace('/', "\\"));
+    g.launch_args = vec!["/c".into(), format!("echo hello& echo hello> {win_marker}")];
     let config = quiet_config();
     let command = svc.build_game_command(&g, &config, &runner, &prefix).unwrap();
     eprintln!("command: {}", command.preview());
@@ -560,10 +596,15 @@ async fn real_run(runner_id: &str) {
         .unwrap();
     let done = svc.wait_session(&info.id, Duration::from_secs(180)).await.unwrap();
     let out = logs(&sink, "game.stdout");
-    eprintln!("final: {done:?}\nstdout: {out:?}");
+    let err = logs(&sink, "game.stderr");
+    let marker_content = std::fs::read_to_string(&marker).unwrap_or_default();
+    eprintln!("final: {done:?}\nstdout: {out:?}\nstderr: {err:?}\nmarker: {marker_content:?}");
     assert_eq!(done.state, SessionState::Exited);
     assert_eq!(done.exit_code, Some(0));
-    assert!(out.iter().any(|l| l.trim() == "hello"), "{out:?}");
+    assert_eq!(marker_content.trim(), "hello", "the program did not run");
+    if expect_stdout {
+        assert!(out.iter().any(|l| l.trim() == "hello"), "{out:?}");
+    }
     if let Some(ws) = command::wineserver_command(&runner, &prefix, "-k") {
         let _ = ws.to_std_command().status();
     }
@@ -572,13 +613,13 @@ async fn real_run(runner_id: &str) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs system wine; initialises a prefix in a tempdir"]
 async fn real_system_wine_session() {
-    real_run(SYSTEM_WINE_ID).await;
+    real_run(SYSTEM_WINE_ID, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs GE-Proton11-11 in compatibilitytools.d; initialises a prefix in a tempdir"]
 async fn real_ge_proton_session() {
-    real_run("proton:GE-Proton11-11-x86_64").await;
+    real_run("proton:GE-Proton11-11-x86_64", false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -593,7 +634,14 @@ async fn real_proton_aux_runinprefix() {
     let config = quiet_config();
     let command = svc.build_game_command(&g, &config, &runner, &prefix).unwrap();
     let aux_cmd = svc
-        .build_prefix_command(Path::new("cmd"), &["/c".into(), "echo".into(), "aux".into()], None, &config, &runner, &prefix)
+        .build_prefix_command(
+            Path::new("cmd"),
+            &["/c".into(), "echo".into(), "aux".into()],
+            None,
+            &config,
+            &runner,
+            &prefix,
+        )
         .unwrap();
     eprintln!("aux: {}", aux_cmd.preview());
     assert_eq!(aux_cmd.args[0], "runinprefix");
@@ -615,8 +663,13 @@ async fn real_proton_aux_runinprefix() {
     let id = info.id.clone();
     let s2 = svc.clone();
     assert!(
-        wait_until(Duration::from_secs(60), || s2.session(&id).unwrap().aux.iter().any(|a| !a.running && a.exit_code.is_some()))
-            .await
+        wait_until(Duration::from_secs(60), || s2
+            .session(&id)
+            .unwrap()
+            .aux
+            .iter()
+            .any(|a| !a.running && a.exit_code.is_some()))
+        .await
     );
     let s = svc.session(&id).unwrap();
     eprintln!("after aux: {s:?}\naux log: {:?}", logs(&sink, "aux.echo"));

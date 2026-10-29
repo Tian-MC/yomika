@@ -260,7 +260,11 @@ fn find_ci(dir: &Path, name: &str) -> Option<PathBuf> {
     if direct.exists() {
         return Some(direct);
     }
-    std::fs::read_dir(dir).ok()?.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name)).map(|e| e.path())
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name))
+        .map(|e| e.path())
 }
 
 fn is_native_dll(path: &Path) -> bool {
@@ -303,7 +307,8 @@ impl PrefixDirs {
             Sig::NativeDllPrefix(pre) => self.dll_dirs.iter().find_map(|d| {
                 std::fs::read_dir(d).ok()?.flatten().find_map(|e| {
                     let n = e.file_name().to_string_lossy().to_ascii_lowercase();
-                    (n.starts_with(pre) && n.ends_with(".dll") && is_native_dll(&e.path())).then(|| format!("native {n}"))
+                    (n.starts_with(pre) && n.ends_with(".dll") && is_native_dll(&e.path()))
+                        .then(|| format!("native {n}"))
                 })
             }),
             Sig::File(rel) => self.drive_c.join(rel).exists().then(|| format!("C:/{rel}")),
@@ -325,7 +330,8 @@ pub fn components(prefix_path: &Path) -> Result<Vec<PrefixComponent>, AppError> 
     }
     let prefix = resolve_prefix(prefix_path);
     let initialized = prefix.join("drive_c").is_dir();
-    let log = std::fs::read_to_string(prefix.join("winetricks.log")).map(|t| parse_winetricks_log(&t)).unwrap_or_default();
+    let log =
+        std::fs::read_to_string(prefix.join("winetricks.log")).map(|t| parse_winetricks_log(&t)).unwrap_or_default();
     let dirs = PrefixDirs::new(&prefix);
 
     Ok(CATALOG
@@ -386,7 +392,11 @@ mod tests {
         std::fs::write(p.join("drive_c/windows/Fonts/SourceHanSans.ttc"), "x").unwrap();
         // Builtin stub (must NOT count) vs. native DLL (counts).
         std::fs::write(p.join("drive_c/windows/system32/quartz.dll"), b"MZ\x90\0........Wine builtin DLL\0").unwrap();
-        std::fs::write(p.join("drive_c/windows/syswow64/d3dx9_43.dll"), b"MZ\x90\0This program cannot be run in DOS mode").unwrap();
+        std::fs::write(
+            p.join("drive_c/windows/syswow64/d3dx9_43.dll"),
+            b"MZ\x90\0This program cannot be run in DOS mode",
+        )
+        .unwrap();
         std::fs::create_dir_all(p.join("drive_c/Program Files (x86)/LAV Filters")).unwrap();
 
         let c = components(&p).unwrap();

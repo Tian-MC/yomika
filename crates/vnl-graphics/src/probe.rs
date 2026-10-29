@@ -191,7 +191,8 @@ pub fn extract_version(text: &str) -> Option<String> {
     for line in text.lines() {
         for raw in line.split_whitespace() {
             let token = raw.trim_matches(|c: char| "()[],;:'\"".contains(c));
-            let token = token.strip_prefix('v').filter(|t| t.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(token);
+            let token =
+                token.strip_prefix('v').filter(|t| t.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(token);
             if looks_like_version(token) {
                 return Some(token.to_string());
             }
@@ -225,10 +226,7 @@ mod tests {
         assert_eq!(extract_version("protontricks (1.14.1)").as_deref(), Some("1.14.1"));
         assert_eq!(extract_version("Executing cd /usr/bin\n20260125 - sha256sum: 43").as_deref(), Some("20260125"));
         assert_eq!(extract_version("ollama version is 0.40.11").as_deref(), Some("0.40.11"));
-        assert_eq!(
-            extract_version("Version: ImageMagick 7.1.2-34 Q16-HDRI x86_64").as_deref(),
-            Some("7.1.2-34")
-        );
+        assert_eq!(extract_version("Version: ImageMagick 7.1.2-34 Q16-HDRI x86_64").as_deref(), Some("7.1.2-34"));
         assert_eq!(extract_version("wl-clipboard 2.3.0").as_deref(), Some("2.3.0"));
         assert_eq!(extract_version("upscale v1.1.4").as_deref(), Some("1.1.4"));
         assert_eq!(extract_version("no digits here"), None);

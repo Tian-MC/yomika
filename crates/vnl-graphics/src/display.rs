@@ -165,7 +165,7 @@ pub fn connectors(probe: &Probe) -> Vec<(String, String, bool)> {
         let status = std::fs::read_to_string(entry.path().join("status")).unwrap_or_default();
         out.push((card.to_string(), connector.to_string(), status.trim() == "connected"));
     }
-    out.sort_by(|a, b| natural_key(&a.0, &a.1).cmp(&natural_key(&b.0, &b.1)));
+    out.sort_by_key(|a| natural_key(&a.0, &a.1));
     out
 }
 
@@ -195,7 +195,8 @@ pub fn monitors(probe: &Probe) -> Vec<MonitorInfo> {
         let base = dir.join(format!("{card}-{connector}"));
         let modes = std::fs::read_to_string(base.join("modes")).unwrap_or_default();
         let edid = std::fs::read(base.join("edid")).ok().and_then(|b| parse_edid(&b));
-        let (mut width, mut height) = modes.lines().next().and_then(parse_mode).map_or((None, None), |(w, h)| (Some(w), Some(h)));
+        let (mut width, mut height) =
+            modes.lines().next().and_then(parse_mode).map_or((None, None), |(w, h)| (Some(w), Some(h)));
         if width.is_none()
             && let Some(e) = &edid
         {
@@ -263,13 +264,8 @@ pub fn parse_edid(bytes: &[u8]) -> Option<EdidInfo> {
                 }
             }
         } else if d[3] == 0xfc {
-            let name: String = d[5..18]
-                .iter()
-                .take_while(|&&b| b != 0x0a)
-                .map(|&b| b as char)
-                .collect::<String>()
-                .trim()
-                .to_string();
+            let name: String =
+                d[5..18].iter().take_while(|&&b| b != 0x0a).map(|&b| b as char).collect::<String>().trim().to_string();
             if !name.is_empty() {
                 model = Some(name);
             }
@@ -408,7 +404,7 @@ pub fn parse_vulkaninfo_summary(text: &str) -> VulkanSummary {
     let mut summary = VulkanSummary::default();
     let mut current: Option<String> = None;
     let mut api: Option<String> = None;
-    let mut flush = |name: &mut Option<String>, api: &mut Option<String>, devices: &mut Vec<String>| {
+    let flush = |name: &mut Option<String>, api: &mut Option<String>, devices: &mut Vec<String>| {
         if let Some(n) = name.take() {
             devices.push(match api.take() {
                 Some(a) => format!("{n} (API {a})"),
@@ -426,7 +422,7 @@ pub fn parse_vulkaninfo_summary(text: &str) -> VulkanSummary {
         } else if let Some((k, v)) = t.split_once('=') {
             match k.trim() {
                 "deviceName" => current = Some(v.trim().to_string()),
-                "apiVersion" => api = Some(v.trim().split_whitespace().next().unwrap_or("").to_string()),
+                "apiVersion" => api = Some(v.split_whitespace().next().unwrap_or("").to_string()),
                 _ => {}
             }
         }
@@ -488,9 +484,7 @@ pub fn gamescope_wsi_layer(probe: &Probe) -> bool {
 }
 
 fn dir_has(dir: &Path, pred: impl Fn(&str) -> bool) -> bool {
-    std::fs::read_dir(dir)
-        .map(|it| it.flatten().any(|e| pred(&e.file_name().to_string_lossy())))
-        .unwrap_or(false)
+    std::fs::read_dir(dir).map(|it| it.flatten().any(|e| pred(&e.file_name().to_string_lossy()))).unwrap_or(false)
 }
 
 /// Candidate gamescope locations beyond `PATH` (Flatpak extension).
@@ -530,12 +524,10 @@ pub fn capabilities(probe: &Probe, rt_upscaler: Option<ToolInfo>) -> GraphicsCap
                 notes.push("No DISPLAY is set: XWayland seems unavailable, so X11-only tools (RT-Upscaler, X11 text hookers/OCR capture) will not work.".into());
             }
         }
-        DisplaySessionType::X11 => notes.push(
-            "X11 session: gamescope HDR output is not possible (HDR clients are tonemapped to SDR).".into(),
-        ),
-        DisplaySessionType::Unknown => {
-            notes.push("No graphical session detected (no WAYLAND_DISPLAY/DISPLAY).".into())
+        DisplaySessionType::X11 => {
+            notes.push("X11 session: gamescope HDR output is not possible (HDR clients are tonemapped to SDR).".into())
         }
+        DisplaySessionType::Unknown => notes.push("No graphical session detected (no WAYLAND_DISPLAY/DISPLAY).".into()),
     }
     if nested_session(probe) {
         notes.push("gamescope will run nested (as a window). `--prefer-output` is an embedded-mode (DRM) option and has no effect here.".into());
@@ -550,7 +542,8 @@ pub fn capabilities(probe: &Probe, rt_upscaler: Option<ToolInfo>) -> GraphicsCap
             }
         }
         None => notes.push(if flatpak {
-            "gamescope not found. Inside Flatpak install the org.freedesktop.Platform.VulkanLayer.gamescope extension.".into()
+            "gamescope not found. Inside Flatpak install the org.freedesktop.Platform.VulkanLayer.gamescope extension."
+                .into()
         } else {
             "gamescope not installed: the gamescope wrapper is unavailable.".into()
         }),
@@ -563,7 +556,10 @@ pub fn capabilities(probe: &Probe, rt_upscaler: Option<ToolInfo>) -> GraphicsCap
         ));
     }
     if gpu_details.iter().any(|g| g.driver.as_deref() == Some("nvidia")) {
-        notes.push("NVIDIA proprietary driver detected: gamescope requires DRM kernel modesetting (nvidia-drm.modeset=1).".into());
+        notes.push(
+            "NVIDIA proprietary driver detected: gamescope requires DRM kernel modesetting (nvidia-drm.modeset=1)."
+                .into(),
+        );
     }
     if rt_upscaler.is_some() && session == DisplaySessionType::Wayland {
         notes.push("RT-Upscaler can only capture X11/XWayland windows; native Wayland windows (including gamescope's own window) cannot be upscaled.".into());
@@ -703,7 +699,13 @@ echo '00:14.0 "USB controller" "Intel" "xHCI"'"#,
         drm_fixture(dir.path());
         let probe = Probe::fixture(
             dir.path(),
-            env(&[("XDG_SESSION_TYPE", "wayland"), ("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":1"), ("XDG_CURRENT_DESKTOP", "GNOME"), ("PATH", "/nonexistent")]),
+            env(&[
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("WAYLAND_DISPLAY", "wayland-0"),
+                ("DISPLAY", ":1"),
+                ("XDG_CURRENT_DESKTOP", "GNOME"),
+                ("PATH", "/nonexistent"),
+            ]),
         );
         let caps = capabilities(&probe, None);
         assert_eq!(caps.session_type, DisplaySessionType::Wayland);

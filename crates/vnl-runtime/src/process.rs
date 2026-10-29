@@ -299,8 +299,8 @@ pub async fn run_to_completion(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vnl_core::events::RecordingSink;
     use vnl_core::AppEvent;
+    use vnl_core::events::RecordingSink;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn captures_lossy_output_and_kills_tree() {

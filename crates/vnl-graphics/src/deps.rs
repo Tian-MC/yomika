@@ -91,9 +91,15 @@ const TOOLS: &[(Entry, &str, &[&str])] = &[
             purpose: "Runs Windows visual novels (unless a Proton runner is used).",
             hints: &[
                 ("arch", "sudo pacman -S wine"),
-                ("debian", "sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine wine32 wine64"),
+                (
+                    "debian",
+                    "sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine wine32 wine64",
+                ),
                 ("fedora", "sudo dnf install wine"),
-                ("generic", "Install Wine from your distribution or https://gitlab.winehq.org/wine/wine/-/wikis/Download"),
+                (
+                    "generic",
+                    "Install Wine from your distribution or https://gitlab.winehq.org/wine/wine/-/wikis/Download",
+                ),
             ],
         },
         "wine",
@@ -191,10 +197,7 @@ const TOOLS: &[(Entry, &str, &[&str])] = &[
             category: C::Translation,
             required: false,
             purpose: "Local LLM server for offline translation and vision OCR.",
-            hints: &[
-                ("arch", "sudo pacman -S ollama"),
-                ("generic", "curl -fsSL https://ollama.com/install.sh | sh"),
-            ],
+            hints: &[("arch", "sudo pacman -S ollama"), ("generic", "curl -fsSL https://ollama.com/install.sh | sh")],
         },
         "ollama",
         &["--version"],
@@ -305,7 +308,10 @@ const PROTON: Entry = Entry {
     required: false,
     purpose: "Proton builds (GE-Proton recommended: includes Wine FSR and media fixes).",
     hints: &[
-        ("generic", "Download GE-Proton from https://github.com/GloriousEggroll/proton-ge-custom/releases into ~/.local/share/Steam/compatibilitytools.d"),
+        (
+            "generic",
+            "Download GE-Proton from https://github.com/GloriousEggroll/proton-ge-custom/releases into ~/.local/share/Steam/compatibilitytools.d",
+        ),
         ("flatpak", "flatpak install flathub net.davidotek.pupgui2  # ProtonUp-Qt"),
     ],
 };
@@ -349,7 +355,8 @@ pub fn has_ja_utf8_locale(locale_a: &str) -> Option<String> {
 pub fn scan_proton_dirs(probe: &Probe) -> Vec<(String, PathBuf, Option<String>)> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Some(h) = probe.home() {
-        for base in [".local/share/Steam", ".steam/root", ".steam/steam", ".var/app/com.valvesoftware.Steam/data/Steam"] {
+        for base in [".local/share/Steam", ".steam/root", ".steam/steam", ".var/app/com.valvesoftware.Steam/data/Steam"]
+        {
             roots.push(h.join(base).join("compatibilitytools.d"));
             roots.push(h.join(base).join("steamapps/common"));
         }
@@ -426,16 +433,13 @@ pub fn detect(probe: &Probe, runners: &[Runner]) -> Vec<DependencyStatus> {
             s.version = probe.run(&path, &["--version"]).and_then(|o| extract_version(&o.combined()));
             s.path = Some(path);
         }
-        if *bin == "wine" {
-            // Wine is only strictly required when no Proton runner exists.
-            s.required = true;
-        }
         out.push(s);
     }
 
     // Proton runners.
     let mut proton = PROTON.status();
-    let mut names: Vec<String> = runners.iter().filter(|r| r.kind == RunnerKind::Proton).map(|r| r.name.clone()).collect();
+    let mut names: Vec<String> =
+        runners.iter().filter(|r| r.kind == RunnerKind::Proton).map(|r| r.name.clone()).collect();
     for (name, path, version) in scan_proton_dirs(probe) {
         if !runners.iter().any(|r| r.path == path) && !names.contains(&name) {
             names.push(match version {
@@ -464,7 +468,8 @@ pub fn detect(probe: &Probe, runners: &[Runner]) -> Vec<DependencyStatus> {
         tess.found = true;
         tess.version = probe.run(&path, &["--version"]).and_then(|o| extract_version(&o.combined()));
         if let Some(o) = probe.run(&path, &["--list-langs"]) {
-            let langs: Vec<&str> = o.combined().lines().map(str::trim).filter(|l| l.starts_with("jpn")).map(|l| l).collect::<Vec<_>>();
+            let text = o.combined();
+            let langs: Vec<&str> = text.lines().map(str::trim).filter(|l| l.starts_with("jpn")).collect();
             if !langs.is_empty() {
                 jpn.found = true;
                 jpn.details = Some(langs.join(", "));
@@ -494,7 +499,9 @@ pub fn detect(probe: &Probe, runners: &[Runner]) -> Vec<DependencyStatus> {
                 .map(|it| {
                     let mut v: Vec<String> = it
                         .flatten()
-                        .filter_map(|e| e.file_name().to_string_lossy().strip_prefix("xdg-desktop-portal-").map(str::to_string))
+                        .filter_map(|e| {
+                            e.file_name().to_string_lossy().strip_prefix("xdg-desktop-portal-").map(str::to_string)
+                        })
                         .filter(|n| !n.starts_with("validate") && !n.starts_with("rewrite"))
                         .collect();
                     v.sort();
@@ -589,10 +596,19 @@ mod tests {
         script(&bin, "gamescope", "echo 'gamescope version 3.17.0 (gcc 16.2.1)' >&2");
         script(&bin, "locale", "printf 'C\\nC.utf8\\nja_JP.utf8\\nPOSIX\\n'");
         script(&bin, "fc-list", "printf 'Noto Sans CJK TC,Noto Sans CJK TC Medium\\nNoto Sans CJK JP\\nIPAGothic\\n'");
-        script(&bin, "tesseract", "if [ \"$1\" = --list-langs ]; then echo 'List of available languages (3):'; echo eng; echo jpn; echo jpn_vert; else echo 'tesseract 5.5.1'; fi");
+        script(
+            &bin,
+            "tesseract",
+            "if [ \"$1\" = --list-langs ]; then echo 'List of available languages (3):'; echo eng; echo jpn; echo jpn_vert; else echo 'tesseract 5.5.1'; fi",
+        );
         let portal_dir = root.join("usr/lib");
         std::fs::create_dir_all(&portal_dir).unwrap();
-        for f in ["xdg-desktop-portal", "xdg-desktop-portal-gnome", "xdg-desktop-portal-gtk", "xdg-desktop-portal-validate-icon"] {
+        for f in [
+            "xdg-desktop-portal",
+            "xdg-desktop-portal-gnome",
+            "xdg-desktop-portal-gtk",
+            "xdg-desktop-portal-validate-icon",
+        ] {
             std::fs::write(portal_dir.join(f), "").unwrap();
         }
         let ge = home.join(".local/share/Steam/compatibilitytools.d/GE-Proton11-11-x86_64");

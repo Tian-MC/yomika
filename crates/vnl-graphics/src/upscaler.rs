@@ -107,7 +107,8 @@ pub trait Upscaler: Send + Sync {
     fn id(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
     fn info(&self, probe: &Probe) -> UpscalerInfo;
-    fn plan(&self, probe: &Probe, config: &UpscalerConfig, ctx: &UpscalerContext<'_>) -> Result<UpscalerPlan, AppError>;
+    fn plan(&self, probe: &Probe, config: &UpscalerConfig, ctx: &UpscalerContext<'_>)
+    -> Result<UpscalerPlan, AppError>;
 }
 
 pub fn backends() -> Vec<Box<dyn Upscaler>> {
@@ -117,7 +118,8 @@ pub fn backends() -> Vec<Box<dyn Upscaler>> {
 pub fn backend(id: Option<&str>) -> Result<Box<dyn Upscaler>, AppError> {
     let id = id.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(RtUpscaler::ID);
     backends().into_iter().find(|b| b.id() == id).ok_or_else(|| {
-        AppError::new(ErrorCode::Unsupported, format!("Unknown upscaler backend '{id}'")).with_details("available: rt-upscaler")
+        AppError::new(ErrorCode::Unsupported, format!("Unknown upscaler backend '{id}'"))
+            .with_details("available: rt-upscaler")
     })
 }
 
@@ -269,7 +271,7 @@ impl RtUpscaler {
             id: id.to_string(),
             name: if id == "none" { "None (scaler only, no SRCNN)".into() } else { format!("CuNNy {id}") },
             path,
-            scale: Some(2.0),
+            scale: if id == "none" { None } else { Some(2.0) },
         };
         let dir = inst.package_dir.as_ref().map(|p| p.join("srcnn/cunny")).filter(|d| d.is_dir());
         let Some(dir) = dir else {
@@ -356,7 +358,11 @@ impl Upscaler for RtUpscaler {
         let inst = Self::locate(probe);
         let (models, model_dir) = Self::models(&inst);
         let config_path = Self::config_path(probe);
-        let presets = config_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|y| parse_profiles(&y)).unwrap_or_default();
+        let presets = config_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|y| parse_profiles(&y))
+            .unwrap_or_default();
         let mut limitations = vec![
             "Captures X11/XWayland windows only; native Wayland windows cannot be upscaled.".to_string(),
             "Shows the result in a separate overlay window; keyboard input is not forwarded, so keep the game window focused.".into(),
@@ -365,16 +371,19 @@ impl Upscaler for RtUpscaler {
         ];
         let session = crate::display::session_type(probe);
         if session == DisplaySessionType::Wayland && !crate::display::xwayland_available(probe) {
-            limitations.push("XWayland is not available in this session, so there is nothing RT-Upscaler can capture.".into());
+            limitations
+                .push("XWayland is not available in this session, so there is nothing RT-Upscaler can capture.".into());
         }
         if session == DisplaySessionType::Unknown {
             limitations.push("No graphical session detected.".into());
         }
         if let Some(foreign) = &inst.foreign_executable {
-            limitations.push(format!("'{}' exists but is not linux-rt-upscaler; it will not be used.", foreign.display()));
+            limitations
+                .push(format!("'{}' exists but is not linux-rt-upscaler; it will not be used.", foreign.display()));
         }
         if inst.executable.is_some() && model_dir.is_none() {
-            limitations.push("Model directory not found; showing the model list known from linux-rt-upscaler 1.1.4.".into());
+            limitations
+                .push("Model directory not found; showing the model list known from linux-rt-upscaler 1.1.4.".into());
         }
         if inst.executable.is_none() {
             limitations.push(format!("Not installed. Install with: {RT_INSTALL_HINT}"));
@@ -394,7 +403,12 @@ impl Upscaler for RtUpscaler {
         }
     }
 
-    fn plan(&self, probe: &Probe, config: &UpscalerConfig, ctx: &UpscalerContext<'_>) -> Result<UpscalerPlan, AppError> {
+    fn plan(
+        &self,
+        probe: &Probe,
+        config: &UpscalerConfig,
+        ctx: &UpscalerContext<'_>,
+    ) -> Result<UpscalerPlan, AppError> {
         let mut plan = UpscalerPlan::default();
         let inst = Self::locate(probe);
         let program = match &inst.executable {
@@ -404,8 +418,11 @@ impl Upscaler for RtUpscaler {
                 PathBuf::from("upscale")
             }
             None => {
-                return Err(AppError::new(ErrorCode::MissingDependency, "RT-Upscaler (linux-rt-upscaler) is not installed")
-                    .with_details(format!("Install it with `{RT_INSTALL_HINT}` or disable the upscaler for this game.")));
+                return Err(AppError::new(
+                    ErrorCode::MissingDependency,
+                    "RT-Upscaler (linux-rt-upscaler) is not installed",
+                )
+                .with_details(format!("Install it with `{RT_INSTALL_HINT}` or disable the upscaler for this game.")));
             }
         };
 
@@ -450,9 +467,15 @@ impl Upscaler for RtUpscaler {
                 "Upscaler extra arguments must not contain '--' (that would make RT-Upscaler launch a second program)",
             ));
         }
-        let has_target = config.extra_args.iter().any(|a| {
-            TARGET_FLAGS.contains(&a.as_str()) || TARGET_FLAGS.iter().any(|f| f.starts_with("--") && a.starts_with(&format!("{f}=")))
-        });
+        let title = config.target_title.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if let Some(title) = title {
+            args.extend(["-t".into(), title.to_string()]);
+        }
+        let has_target = title.is_some()
+            || config.extra_args.iter().any(|a| {
+                TARGET_FLAGS.contains(&a.as_str())
+                    || TARGET_FLAGS.iter().any(|f| f.starts_with("--") && a.starts_with(&format!("{f}=")))
+            });
         if !has_target {
             args.extend(["--target-delay".into(), RT_DEFAULT_TARGET_DELAY.to_string()]);
             plan.warnings.push(format!(
@@ -551,7 +574,13 @@ mod tests {
     }
 
     fn ctx(env: &BTreeMap<String, String>) -> UpscalerContext<'_> {
-        UpscalerContext { session: DisplaySessionType::Wayland, xwayland: true, gamescope_enabled: false, game_env: env, lenient: false }
+        UpscalerContext {
+            session: DisplaySessionType::Wayland,
+            xwayland: true,
+            gamescope_enabled: false,
+            game_env: env,
+            lenient: false,
+        }
     }
 
     #[test]
@@ -585,7 +614,9 @@ mod tests {
         assert!(info.models.iter().all(|m| m.path.is_none()));
         assert!(info.limitations.iter().any(|l| l.contains("pipx install linux-rt-upscaler")));
         let env = BTreeMap::new();
-        let e = RtUpscaler.plan(&fx.probe, &UpscalerConfig { enabled: true, ..Default::default() }, &ctx(&env)).unwrap_err();
+        let e = RtUpscaler
+            .plan(&fx.probe, &UpscalerConfig { enabled: true, ..Default::default() }, &ctx(&env))
+            .unwrap_err();
         assert_eq!(e.code, ErrorCode::MissingDependency);
         let lenient = UpscalerContext { lenient: true, ..ctx(&env) };
         let p = RtUpscaler.plan(&fx.probe, &UpscalerConfig { enabled: true, ..Default::default() }, &lenient).unwrap();
@@ -603,6 +634,18 @@ mod tests {
     }
 
     #[test]
+    fn target_title_becomes_t_flag() {
+        let fx = fixture(true);
+        let env = BTreeMap::new();
+        let cfg =
+            UpscalerConfig { enabled: true, target_title: Some("ゲーム タイトル".into()), ..Default::default() };
+        let plan = RtUpscaler.plan(&fx.probe, &cfg, &ctx(&env)).unwrap();
+        let args = &plan.companions[0].args;
+        assert!(args.windows(2).any(|w| w == ["-t", "ゲーム タイトル"]));
+        assert!(!args.iter().any(|a| a == "--target-delay"));
+    }
+
+    #[test]
     fn companion_command() {
         let fx = fixture(true);
         let env = BTreeMap::new();
@@ -612,6 +655,7 @@ mod tests {
             model: Some("4x24".into()),
             preset: Some("manual".into()),
             scale: Some(4.0),
+            target_title: None,
             extra_args: vec![],
         };
         let plan = RtUpscaler.plan(&fx.probe, &cfg, &ctx(&env)).unwrap();
@@ -621,7 +665,12 @@ mod tests {
         assert_eq!(plan.warnings.len(), 1, "{:?}", plan.warnings);
 
         // Explicit target: no delay, title passed through as one argv entry.
-        let cfg = UpscalerConfig { extra_args: vec!["-t".into(), "ゲーム タイトル".into()], scale: None, preset: None, ..cfg };
+        let cfg = UpscalerConfig {
+            extra_args: vec!["-t".into(), "ゲーム タイトル".into()],
+            scale: None,
+            preset: None,
+            ..cfg
+        };
         let plan = RtUpscaler.plan(&fx.probe, &cfg, &ctx(&env)).unwrap();
         assert_eq!(plan.companions[0].args, ["-m", "4x24", "-t", "ゲーム タイトル"]);
         assert!(plan.warnings.is_empty());
@@ -632,7 +681,9 @@ mod tests {
         let fx = fixture(true);
         let env = BTreeMap::new();
         let bad = UpscalerConfig { enabled: true, model: Some("4x99".into()), ..Default::default() };
-        assert!(RtUpscaler.plan(&fx.probe, &bad, &ctx(&env)).unwrap_err().message.contains("available: none, veryfast"));
+        assert!(
+            RtUpscaler.plan(&fx.probe, &bad, &ctx(&env)).unwrap_err().message.contains("available: none, veryfast")
+        );
         let sep = UpscalerConfig { enabled: true, extra_args: vec!["--".into(), "x".into()], ..Default::default() };
         assert!(RtUpscaler.plan(&fx.probe, &sep, &ctx(&env)).is_err());
 

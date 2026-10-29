@@ -240,9 +240,14 @@ pub fn build(
     };
 
     // 2. locale
-    let locale = config.locale.locale.as_deref().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).or_else(
-        || if config.locale.japanese_locale { Some("ja_JP.UTF-8".to_string()) } else { None },
-    );
+    let locale = config
+        .locale
+        .locale
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .or_else(|| if config.locale.japanese_locale { Some("ja_JP.UTF-8".to_string()) } else { None });
     if let Some(locale) = locale {
         if let Some(available) = &ctx.locales {
             let want = normalize_locale(&locale);
@@ -328,7 +333,9 @@ pub fn build_in_prefix(
     runner: &Runner,
     prefix: &PrefixInfo,
 ) -> Result<Built, AppError> {
-    let cwd = cwd.map(Path::to_path_buf).or_else(|| exe.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf));
+    let cwd = cwd
+        .map(Path::to_path_buf)
+        .or_else(|| exe.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf));
     let inv = Invocation { exe, args, cwd, verb: ProtonVerb::RunInPrefix, install_dir: None };
     build(ctx, &inv, config, runner, prefix)
 }

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::State;
-use vnl_core::{AppError, AppSettings, Game, GameId, GameQuery, GameSettings, PrefixChoice, PrefixKind};
+use vnl_core::{AppError, AppSettings, Game, GameId, GameQuery, GameSettings};
 use vnl_library::{
     ImportRequest, ImportScan, Library, PlaySession, RestoreResult, SaveBackup, SaveLocation, VndbSearchResult,
 };
@@ -29,29 +29,17 @@ where
 }
 
 /// `drive_c` of the game's prefix, if it can be determined without side
-/// effects. Uses `list_prefixes` (read-only) instead of `resolve_prefix`,
-/// which may create a dedicated prefix. Any runtime error (including
-/// NotImplemented) simply disables prefix-based save detection.
+/// effects (`prefix_for_game` never creates or registers a prefix). Any
+/// runtime error simply disables prefix-based save detection.
 fn prefix_drive_c(state: &AppState, game_id: GameId) -> Option<PathBuf> {
+    let game = state.library.get_game(game_id).ok()?;
     let settings = state.library.get_settings(game_id).ok()?;
-    let prefix_path = match &settings.runtime.prefix {
-        PrefixChoice::Custom { path } => path.clone(),
-        choice => {
-            let prefixes = match state.runtime.list_prefixes() {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::debug!(game_id, error = %e, "prefix list unavailable; skipping prefix save detection");
-                    return None;
-                }
-            };
-            prefixes
-                .into_iter()
-                .find(|p| match choice {
-                    PrefixChoice::Shared { id } => &p.id == id,
-                    PrefixChoice::Dedicated => p.kind == PrefixKind::Dedicated { game_id },
-                    PrefixChoice::Custom { .. } => false,
-                })?
-                .path
+    let prefix_path = match state.runtime.prefix_for_game(&game, &settings.runtime.prefix) {
+        Ok(Some(prefix)) => prefix.path,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::debug!(game_id, error = %e, "prefix unavailable; skipping prefix save detection");
+            return None;
         }
     };
     // Wine: <prefix>/drive_c; Proton compat data: <prefix>/pfx/drive_c.

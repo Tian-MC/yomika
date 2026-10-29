@@ -4934,6 +4934,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "keyring-core",
+ "nix",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

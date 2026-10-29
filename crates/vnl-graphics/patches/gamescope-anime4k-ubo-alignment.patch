@@ -1,0 +1,34 @@
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index ffdf96e..27683eb 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -427,6 +427,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
+ 
+ 	VkPhysicalDeviceProperties props;
+ 	vk.GetPhysicalDeviceProperties( m_physDev, &props );
++	m_uniformOffsetAlignment = std::max<uint32_t>( 16, (uint32_t)props.limits.minUniformBufferOffsetAlignment );
+ 	vk_log.infof( "selecting physical device '%s': queue family %x (general queue family %x)", props.deviceName, m_queueFamily, m_generalQueueFamily );
+ 
+ 	return true;
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index b2b6132..2f90e5f 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -817,7 +817,7 @@ public:
+ 	{
+ 		assert(size <= upload_buffer_size);
+ 
+-		m_uploadBufferOffset = align(m_uploadBufferOffset, 16);
++		m_uploadBufferOffset = align(m_uploadBufferOffset, m_uniformOffsetAlignment);
+ 		if (m_uploadBufferOffset + size > upload_buffer_size)
+ 		{
+ 			fprintf(stderr, "Exceeded uploadBufferData\n");
+@@ -898,6 +898,8 @@ protected:
+ 	VkBuffer m_uploadBuffer;
+ 	VkDeviceMemory m_uploadBufferMemory;
+ 	void *m_uploadBufferData;
++	// Uniform buffer descriptors must be bound at multiples of minUniformBufferOffsetAlignment (64 on NVIDIA).
++	uint32_t m_uniformOffsetAlignment = 16;
+ 	uint32_t m_uploadBufferOffset = 0;
+ 
+ 	VkSemaphore m_scratchTimelineSemaphore;

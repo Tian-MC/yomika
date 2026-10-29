@@ -95,4 +95,4 @@ their trade-offs. Third-party dependencies keep their own licenses.
 
 ## Anime4K upscaling
 
-Optional `-F anime4k` filter through the gamescope-anime4k fork, with a guided private build. See [docs/GAMESCOPE_ANIME4K.md](docs/GAMESCOPE_ANIME4K.md) (includes a known black-image issue on NVIDIA).
+Optional `-F anime4k` filter through the gamescope-anime4k fork, with a guided private build. See [docs/GAMESCOPE_ANIME4K.md](docs/GAMESCOPE_ANIME4K.md) (includes the NVIDIA black-image root cause and fix).

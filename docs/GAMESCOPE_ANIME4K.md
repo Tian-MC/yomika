@@ -45,21 +45,54 @@ Settings > Gamescope > "Download and build". Nothing is built unless you press i
 Tested: full build on Arch Linux (gcc 16, libinput with `LIBINPUT_SWITCH_KEYPAD_SLIDE`) in about 4 minutes cold and 30 s
 incremental; fake-toolchain tests cover progress, retry, cancellation, failure and "previous build kept".
 
-## Known issue: black image on NVIDIA (verified)
+## NVIDIA: black image, root cause and fix (verified)
 
-With the NVIDIA proprietary driver (RTX 5060 Ti, 615.78) the fork accepts `-F anime4k` and keeps running, but the
-output is **entirely black**, in headless and nested mode, with a Wine game (G-senjou) and with `vkcube`; `-F linear`
-and `-F fsr` render normally in the same setup. Findings so far:
+Symptom: with the unmodified fork, `-F anime4k` was accepted but the output was entirely black on an RTX 5060 Ti
+(driver 615.78). `-F linear` and `-F fsr` were fine in the same setups. NVIDIA is **not** incompatible: the fork had a bug
+that only NVIDIA's limits expose.
 
-* not caused by the shader maths: replacing the last pass by "copy the input" is still black;
-* not caused by the storage image format declaration (`rgba8` in `descriptor_set.h` vs. float16 layers): fixing it
-  in a local patch did not change the result.
+| Experiment (vkcube, 640x360 -> 1280x720, mean brightness of gamescope's on-screen buffer) | linear | anime4k |
+|---|---|---|
+| headless backend | 0.132 | **0** |
+| nested Wayland backend | 0.132 | **0** |
+| `--backend sdl` (needs `-Dsdl2_backend=enabled`) | 0.133 | **0** |
+| any backend + Khronos validation layer | 0.132 | **1.0 (white)** |
+| headless, **with the alignment fix** | 0.132 | **0.132** |
+| G-senjou through the Wine/Proton pipeline, with the fix | sharp edges vs. blurry linear edges | |
 
-So the problem is in the fork's Anime4K output path on this driver. The launcher shows a warning when the NVIDIA
-driver is detected and Anime4K is selected. Reproduce with
-`VNL_TEST_BUILD_HOME=<dir> cargo test -p vnl-graphics real_build -- --ignored --nocapture` followed by
-`cargo test -p vnl-graphics real_anime4k -- --ignored --nocapture` (set `VNL_STRICT_ANIME4K=1` to fail on black output).
-It is untested on AMD/Intel Mesa drivers.
+* The backend is irrelevant: SDL, Wayland and headless behave the same. (The white output reported in PR #2072 is what the
+  validation layer produces; without it the same bug is black.) So the launcher does **not** switch backend for Anime4K.
+* Not the shader maths and not the format declaration: a "copy the input" final pass was still black, and fixing the
+  `rgba8` vs `rgba16f` declaration alone changed nothing.
+* **Cause**, found with the Khronos validation layer (the Arch package `vulkan-validation-layers`, unpacked into a scratch
+  folder, `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`): `VUID-VkWriteDescriptorSet-descriptorType-00327`,
+  *"offset (16) must be a multiple of minUniformBufferOffsetAlignment (64)"*. Only Anime4K triggered it. gamescope's
+  `uploadBufferData()` aligns constant-buffer offsets to a hard-coded 16 bytes; the Anime4K constants are 16 bytes,
+  so consecutive dispatches got offsets 16, 32, ... which NVIDIA (alignment 64) cannot bind. The shader then read
+  `u_inputSize = 0`, hit `if (coord.x >= u_inputSize.x) return;` and wrote nothing. The other filters use larger
+  constant blocks that happen to fall on valid offsets. AMD/Intel limits are smaller, which hides the bug there.
+* **Fix**: align to `max(16, minUniformBufferOffsetAlignment)` (`crates/vnl-graphics/patches/gamescope-anime4k-ubo-alignment.patch`,
+  two lines in `rendervulkan.hpp/.cpp`). It does not touch any shader, so FSR, NIS and linear are unchanged: with the
+  fix their output is the same as before (`linear` mean 0.132 in every run).
+* The guided build applies the patch to its private clone (`git apply --check` first; skipped if the sources already contain
+  it; if it no longer applies the build continues without it and says so in the log). The manifest records
+  `patches: ["ubo-alignment"]`.
+
+What the launcher does with this:
+
+* The NVIDIA warning is shown only when the selected binary is not the managed build with the fix (custom and system
+  binaries that list `anime4k` may not have it). The fallback to FSR/Linear stays available.
+* Regression tests: `bundled_patch_targets_the_uniform_alignment`, `patch_that_does_not_apply_is_reported_but_does_not_break_the_build`,
+  `nvidia_warning_is_not_shown_for_the_patched_managed_build`, and the real tests
+  `real_build_of_the_anime4k_fork` + `real_anime4k_filter_renders_a_picture` (strict: the anime4k picture must not be black and
+  must be close to the linear control). Run:
+  `VNL_TEST_BUILD_HOME=<dir> cargo test -p vnl-graphics real_build -- --ignored --nocapture` then
+  `... real_anime4k -- --ignored --nocapture` (needs `vkcube`, ImageMagick).
+
+Remaining validation messages (also present with `-F linear` or harmless here), not changed: the shader declares `rgba8`
+storage images for `rgba16f` layers (`Undefined-Value-StorageImage-FormatMismatch-ImageView`; the picture is correct
+on this driver, but the spec calls the values undefined) and a uniform range larger than `maxUniformBufferRange`
+(`...-00332`, also reported for the plain compositing path). They are worth reporting upstream.
 
 ## Distributions
 

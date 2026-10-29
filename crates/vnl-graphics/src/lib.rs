@@ -215,9 +215,12 @@ impl GraphicsService {
                 gs.binary_path.as_deref(),
                 options.gamescope_path.as_deref(),
             );
+            let mut selected_fixed = false;
             let program = match gamescope_bin::select(&binaries, gs.filter) {
                 Ok((bin, w)) => {
                     warnings.extend(w);
+                    selected_fixed = bin.source == GamescopeSource::Managed
+                        && gamescope_build::read_manifest(&self.paths).is_some_and(|m| m.has_ubo_alignment_fix());
                     bin.path.clone()
                 }
                 Err(e) if lenient => {
@@ -228,8 +231,9 @@ impl GraphicsService {
                 Err(e) => return Err(e),
             };
             if gs.filter == vnl_core::GamescopeFilter::Anime4k {
-                let nvidia = probe.sys_path("/proc/driver/nvidia/version").exists();
-                warnings.extend(gamescope::anime4k_warnings(gs, nvidia));
+                // Only builds without the uniform-alignment fix render black on NVIDIA.
+                let nvidia_unfixed = probe.sys_path("/proc/driver/nvidia/version").exists() && !selected_fixed;
+                warnings.extend(gamescope::anime4k_warnings(gs, nvidia_unfixed));
             }
             if runner.is_some_and(|r| r.kind == RunnerKind::Proton) && command.env.contains_key("PROTON_ENABLE_WAYLAND")
             {
@@ -411,6 +415,47 @@ mod tests {
         std::fs::write(nv.join("version"), "NVRM version: 615.78").unwrap();
         let plan = svc.apply(&cfg, game_cmd(&r), &r).unwrap();
         assert!(plan.warnings.iter().any(|w| w.contains("black image")));
+    }
+
+    #[test]
+    fn nvidia_warning_is_not_shown_for_the_patched_managed_build() {
+        let f = fx(false);
+        let paths = AppPaths::under(&f.dir.path().join("app"));
+        let managed = gamescope_bin::managed_binary(&paths);
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        std::fs::copy(crate::test_support::fake_gamescope(f.dir.path(), "tmp-gs", "linear, fsr, anime4k"), &managed)
+            .unwrap();
+        let manifest = |patches: &[&str]| gamescope_build::InstallManifest {
+            repo: "r".into(),
+            branch: "master".into(),
+            commit: "c".repeat(40),
+            built_at: 0,
+            version: None,
+            filters: vec!["anime4k".into()],
+            patches: patches.iter().map(|s| s.to_string()).collect(),
+        };
+        let write = |m: &gamescope_build::InstallManifest| {
+            std::fs::write(gamescope_bin::managed_dir(&paths).join("installed.json"), serde_json::to_string(m).unwrap())
+                .unwrap()
+        };
+        let nv = f.dir.path().join("root/proc/driver/nvidia");
+        std::fs::create_dir_all(&nv).unwrap();
+        std::fs::write(nv.join("version"), "NVRM version: 615.78").unwrap();
+        let svc = with_commands(&f);
+        let r = ge_runner(f.dir.path());
+        let cfg = GraphicsConfig {
+            gamescope: GamescopeConfig { enabled: true, filter: GamescopeFilter::Anime4k, ..Default::default() },
+            ..Default::default()
+        };
+        // Managed build without the fix (older install): warn.
+        write(&manifest(&[]));
+        let plan = svc.apply(&cfg, game_cmd(&r), &r).unwrap();
+        assert!(plan.command.program.ends_with("gamescope-anime4k/bin/gamescope"));
+        assert!(plan.warnings.iter().any(|w| w.contains("black image")));
+        // With the fix: no incompatibility warning on NVIDIA.
+        write(&manifest(&[gamescope_build::UBO_ALIGNMENT_PATCH_ID]));
+        let plan = svc.apply(&cfg, game_cmd(&r), &r).unwrap();
+        assert!(!plan.warnings.iter().any(|w| w.contains("black image")), "{:?}", plan.warnings);
     }
 
     #[test]

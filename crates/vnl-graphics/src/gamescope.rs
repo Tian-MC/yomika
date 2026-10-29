@@ -92,14 +92,14 @@ pub fn filter_value(f: GamescopeFilter) -> &'static str {
 }
 
 /// Notes shown when the Anime4K filter is selected.
-pub fn anime4k_warnings(cfg: &GamescopeConfig, nvidia_proprietary: bool) -> Vec<String> {
+pub fn anime4k_warnings(cfg: &GamescopeConfig, nvidia_without_fix: bool) -> Vec<String> {
     let mut w = vec![
         "Anime4K (2x CNN UL) is the heaviest gamescope filter: it runs a neural network on the GPU every frame."
             .to_string(),
     ];
-    if nvidia_proprietary {
+    if nvidia_without_fix {
         w.push(
-            "Known issue: with the NVIDIA proprietary driver the gamescope-anime4k fork rendered a black image in our tests (RTX 5060 Ti, driver 615.78, headless and nested). If you see a black screen, switch the filter to FSR or Linear."
+            "Known issue: the gamescope-anime4k fork renders a black image on NVIDIA unless it contains the uniform-buffer alignment fix (it binds constants at 16-byte offsets, NVIDIA needs 64). The Anime4K build made by the launcher includes the fix; other builds may not. If the screen is black, rebuild from Settings > Gamescope or switch the filter to FSR or Linear."
                 .to_string(),
         );
     }

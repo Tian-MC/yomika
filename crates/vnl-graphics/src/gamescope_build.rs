@@ -54,6 +54,16 @@ const SUBMODULES: &[&str] = &[
 ];
 const SUBMODULE_ATTEMPTS: usize = 3;
 
+/// Id recorded in the manifest when [`UBO_ALIGNMENT_PATCH`] is part of the build.
+pub const UBO_ALIGNMENT_PATCH_ID: &str = "ubo-alignment";
+/// Small fix for the fork: `uploadBufferData` aligned uniform-buffer offsets to a
+/// hard-coded 16 bytes, but descriptors must be bound at multiples of
+/// `minUniformBufferOffsetAlignment` (64 on NVIDIA). The 16-byte Anime4K constants
+/// then landed on invalid offsets, the shaders read zeros as image size and returned
+/// early: a black image. Found with the Khronos validation layer
+/// (VUID-VkWriteDescriptorSet-descriptorType-00327), see docs/GAMESCOPE_ANIME4K.md.
+pub const UBO_ALIGNMENT_PATCH: &str = include_str!("../patches/gamescope-anime4k-ubo-alignment.patch");
+
 // ------------------------------------------------------------ requirements
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,6 +228,21 @@ pub struct InstallManifest {
     pub built_at: i64,
     pub version: Option<String>,
     pub filters: Vec<String>,
+    /// Source patches applied before building (e.g. [`UBO_ALIGNMENT_PATCH_ID`]).
+    #[serde(default)]
+    pub patches: Vec<String>,
+}
+
+impl InstallManifest {
+    pub fn has_ubo_alignment_fix(&self) -> bool {
+        self.patches.iter().any(|p| p == UBO_ALIGNMENT_PATCH_ID)
+    }
+}
+
+/// Manifest of the managed build, if one is installed.
+pub fn read_manifest(paths: &AppPaths) -> Option<InstallManifest> {
+    let text = std::fs::read_to_string(gamescope_bin::managed_dir(paths).join(MANIFEST_FILE)).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,8 +364,7 @@ impl GamescopeBuilder {
 
     pub fn managed(&self) -> ManagedBuild {
         let dir = gamescope_bin::managed_dir(&self.paths);
-        let manifest =
-            std::fs::read_to_string(dir.join(MANIFEST_FILE)).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let manifest = read_manifest(&self.paths);
         let binary =
             gamescope_bin::inspect(&self.probe, &gamescope_bin::managed_binary(&self.paths), GamescopeSource::Managed);
         ManagedBuild { installed: binary.is_some(), dir, binary, manifest }
@@ -560,6 +584,34 @@ impl GamescopeBuilder {
             return fail("cannot determine the commit that was fetched");
         }
 
+        // 2b. the UBO alignment fix; skipped when the sources already contain it
+        let patch_file = work.join("anime4k-ubo-alignment.patch");
+        std::fs::write(&patch_file, UBO_ALIGNMENT_PATCH)?;
+        let mut patches: Vec<String> = Vec::new();
+        let src_s = s(&src);
+        let patch_s = s(&patch_file);
+        match self.exec(ctx, &tools.git, &["-C", &src_s, "apply", "--check", &patch_s], &work, &env, |_| {}).await {
+            Ok(()) => {
+                self.exec(ctx, &tools.git, &["-C", &src_s, "apply", &patch_s], &work, &env, |_| {}).await?;
+                self.log(ctx, LogLevel::Info, "applied the uniform-buffer alignment fix (needed on NVIDIA)");
+                patches.push(UBO_ALIGNMENT_PATCH_ID.into());
+            }
+            Err(BuildError::Cancelled) => return Err(BuildError::Cancelled),
+            Err(_) => {
+                let reverse = ["-C", &src_s, "apply", "--reverse", "--check", &patch_s];
+                if self.exec(ctx, &tools.git, &reverse, &work, &env, |_| {}).await.is_ok() {
+                    self.log(ctx, LogLevel::Info, "the sources already contain the uniform-buffer alignment fix");
+                    patches.push(UBO_ALIGNMENT_PATCH_ID.into());
+                } else {
+                    self.log(
+                        ctx,
+                        LogLevel::Warn,
+                        "the alignment fix does not apply to these sources; building without it (Anime4K may render black on NVIDIA)",
+                    );
+                }
+            }
+        }
+
         // 3. configure (0.30 - 0.35)
         self.progress(ctx, 0.30, "Configuring (meson setup)", true);
         let prefix = s(&final_dir);
@@ -635,6 +687,7 @@ impl GamescopeBuilder {
             built_at: now_secs(),
             version: built.version.clone(),
             filters: built.filters.clone(),
+            patches,
         };
         std::fs::write(staged_root.join(MANIFEST_FILE), serde_json::to_string_pretty(&manifest).unwrap_or_default())?;
 
@@ -901,6 +954,7 @@ git)
   case "$*" in
     *clone*) for last; do :; done; mkdir -p "$last/.git"; echo cloned;;
     *rev-parse*) echo 0123456789abcdef0123456789abcdef01234567;;
+    *apply*) [ "$FAKE_MODE" = nopatch ] && { echo "error: patch failed" >&2; exit 1; }; echo applied;;
     *submodule*) [ "$FAKE_MODE" = flaky ] && [ ! -f "$FAKE_STATE/sub-ok" ] && { touch "$FAKE_STATE/sub-ok"; echo "fatal: network" >&2; exit 1; }; echo submodules;;
     *) echo git "$@";;
   esac;;
@@ -993,6 +1047,7 @@ esac
         let m = managed.manifest.unwrap();
         assert_eq!(m.commit, "0123456789abcdef0123456789abcdef01234567");
         assert!(m.filters.contains(&"anime4k".to_string()));
+        assert!(m.has_ubo_alignment_fix(), "the NVIDIA fix is part of the build: {:?}", m.patches);
         // Staging area cleaned up, log file written.
         assert!(!e.paths.cache_dir.join("gamescope-anime4k/stage").exists());
         let log = std::fs::read_to_string(status.log_path.unwrap()).unwrap();
@@ -1005,6 +1060,33 @@ esac
         assert!(progress.windows(2).all(|w| w[0] <= w[1]), "progress went backwards: {progress:?}");
         assert!(e.sink.events().iter().any(|ev| matches!(ev, AppEvent::Log(l) if l.source == LOG_SOURCE)));
         drop(e.tmp);
+    }
+
+    #[tokio::test]
+    async fn patch_that_does_not_apply_is_reported_but_does_not_break_the_build() {
+        let _g = ENV_LOCK.lock().await;
+        let e = env("nopatch");
+        e.builder.start(BuildOptions::default()).unwrap();
+        let status = wait_finished(&e.builder).await;
+        assert_eq!(status.state, Some(TaskState::Done), "{status:?}");
+        let m = e.builder.managed().manifest.unwrap();
+        assert!(m.patches.is_empty() && !m.has_ubo_alignment_fix());
+        let log = std::fs::read_to_string(status.log_path.unwrap()).unwrap();
+        assert!(log.contains("does not apply to these sources"));
+    }
+
+    #[test]
+    fn bundled_patch_targets_the_uniform_alignment() {
+        // Regression guard for the NVIDIA black-image bug: offsets must follow the device limit.
+        assert!(UBO_ALIGNMENT_PATCH.contains("minUniformBufferOffsetAlignment"));
+        assert!(UBO_ALIGNMENT_PATCH.contains("-		m_uploadBufferOffset = align(m_uploadBufferOffset, 16);"));
+        assert!(
+            UBO_ALIGNMENT_PATCH
+                .contains("+		m_uploadBufferOffset = align(m_uploadBufferOffset, m_uniformOffsetAlignment);")
+        );
+        // Only the two renderer files are touched; the FSR/NIS/linear shaders are not.
+        assert!(UBO_ALIGNMENT_PATCH.lines().filter(|l| l.starts_with("diff --git")).count() == 2);
+        assert!(!UBO_ALIGNMENT_PATCH.contains("shaders/"));
     }
 
     #[tokio::test]
@@ -1128,6 +1210,12 @@ esac
         let managed = builder.managed();
         let bin = managed.binary.expect("managed binary");
         assert!(bin.supports_anime4k, "filters: {:?}", bin.filters);
+        let manifest = managed.manifest.expect("manifest");
+        assert!(
+            manifest.has_ubo_alignment_fix(),
+            "the fix did not apply to the current sources: {:?}",
+            manifest.patches
+        );
         eprintln!("built {} {:?} filters {:?}", bin.path.display(), bin.version, bin.filters);
     }
 
@@ -1138,8 +1226,8 @@ esac
     /// gamescope's own screenshot request (root property `GAMESCOPECTRL_REQUEST_SCREENSHOT`,
     /// type 4 = what is on screen).
     ///
-    /// KNOWN ISSUE: with the NVIDIA proprietary driver (RTX 5060 Ti, 615.78) the fork
-    /// renders black. That is reported as a warning; set `VNL_STRICT_ANIME4K=1` to fail.
+    /// Regression test for the NVIDIA black-image bug (see `UBO_ALIGNMENT_PATCH`): the
+    /// build made by this module must render, like the `linear` control.
     #[test]
     #[ignore = "needs the built fork, vkcube and ImageMagick"]
     fn real_anime4k_filter_renders_a_picture() {
@@ -1223,10 +1311,17 @@ esac
         assert!(linear > 0.01, "control run with -F linear rendered nothing (mean {linear})");
         let anime4k = capture("anime4k");
         eprintln!("mean brightness: linear {linear:.4}, anime4k {anime4k:.4}");
-        if anime4k <= 0.001 {
-            let msg = "KNOWN ISSUE: -F anime4k is accepted but renders a black image on this GPU/driver";
-            assert!(std::env::var_os("VNL_STRICT_ANIME4K").is_none(), "{msg}");
-            eprintln!("WARNING: {msg}");
+        // The guided build includes the uniform-alignment fix, so a black picture is a regression.
+        // (Without the fix NVIDIA renders black: VUID-VkWriteDescriptorSet-descriptorType-00327.)
+        let fixed = read_manifest(&AppPaths::under(&root)).is_some_and(|m| m.has_ubo_alignment_fix());
+        if fixed {
+            assert!(anime4k > 0.01, "-F anime4k rendered a black image even with the alignment fix (mean {anime4k})");
+            assert!(
+                (anime4k - linear).abs() < 0.05 * linear,
+                "anime4k brightness {anime4k} is far from linear {linear}"
+            );
+        } else if anime4k <= 0.001 {
+            eprintln!("WARNING: this fork build renders black here (no alignment fix recorded in its manifest)");
         }
     }
 

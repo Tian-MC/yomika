@@ -203,7 +203,7 @@ export interface GamescopeConfig {
   preferOutput: string | null;
   forceGrabCursor: boolean;
   hdr: boolean;
-  /** Send one Alt+Enter so a windowed game switches to its own fullscreen mode (default true). */
+  /** Opt-in (default false): send one Alt+Enter so a windowed game switches to its own fullscreen mode. Normally gamescope scales the window; set the game resolution instead. */
   autoFullscreen: boolean;
   /** Gamescope binary for this game; null = automatic. */
   binaryPath: string | null;

@@ -99,3 +99,12 @@ on this driver, but the spec calls the values undefined) and a uniform range lar
 * Arch: all build dependencies are in the official repos (`pacman -S --needed ...` is printed for what is missing).
 * Debian/Ubuntu/Fedora: package names are provided on a best-effort basis (not run in CI here).
 * Flatpak: building requires host toolchain access; use a custom binary path instead (see `docs/FLATPAK.md`).
+
+## Windowed games: let gamescope scale (no game fullscreen)
+
+Gamescope does the scaling; the launcher does not push the game into its own fullscreen mode (the old "switch the game to
+fullscreen" Alt+Enter assist is now opt-in and off by default). Set the **game resolution** to the game's native size and the
+output resolution to the screen. Verified headless with Subarashiki Hibi (4:3) under GE-Proton:
+`-w 1280 -h 960 -W 1920 -H 1080 -f` gives a centred 1440x1080 picture with no band, and with `-w 1280 -h 720` G-senjou fills the
+frame. Without the game resolution, Wine keeps a hidden window frame (1286x992 for a 1280x960 game) that gamescope scales as part of
+the picture, which looks like a black band.

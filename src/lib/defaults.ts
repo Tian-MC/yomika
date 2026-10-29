@@ -27,7 +27,7 @@ export function defaultGraphicsConfig(): GraphicsConfig {
       fpsLimitUnfocused: null,
       preferOutput: null,
       forceGrabCursor: false,
-      autoFullscreen: true,
+      autoFullscreen: false,
       binaryPath: null,
       hdr: false,
       extraArgs: [],

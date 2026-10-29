@@ -414,7 +414,7 @@ export const it: Record<MessageKey, string> = {
   "gfx.grabCursor": "Forza cattura del cursore",
   "gfx.grabCursorHint": "Evita che il mouse esca dalla finestra con alcuni motori.",
   "gfx.autoFullscreen": "Porta il gioco a schermo intero",
-  "gfx.autoFullscreenHint": "Invia Alt+Invio una volta se il gioco parte in finestra. In gamescope i giochi in finestra mostrano bande nere dovute alla cornice nascosta.",
+  "gfx.autoFullscreenHint": "Disattivato di default: è gamescope a scalare la finestra del gioco. Imposta invece la risoluzione di gioco (quella nativa). Attivalo solo se un gioco richiede il proprio schermo intero (invia Alt+Invio una volta).",
   "gfx.hdr": "HDR",
   "gfx.hdrHint": "Richiede una sessione Wayland e uno schermo HDR.",
   "gfx.hdrNeedsWayland": "La tua sessione non è Wayland: l'HDR non funzionerà.",

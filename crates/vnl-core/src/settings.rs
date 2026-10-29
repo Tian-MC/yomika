@@ -186,8 +186,9 @@ pub struct GamescopeConfig {
     pub prefer_output: Option<String>,
     pub force_grab_cursor: bool,
     pub hdr: bool,
-    /// Switch a windowed game to its own fullscreen mode (one Alt+Enter,
-    /// only if its window does not already cover the nested display).
+    /// Opt-in, off by default: gamescope should do the scaling (set the game
+    /// resolution). Switch a windowed game to its own fullscreen mode (one
+    /// Alt+Enter, only if its window does not already cover the nested display).
     /// Windowed Wine games inside gamescope keep the empty Windows frame
     /// area in their X window, which shows up as black bars and a slight
     /// downscale; the game's fullscreen mode has no frame.
@@ -216,7 +217,7 @@ impl Default for GamescopeConfig {
             prefer_output: None,
             force_grab_cursor: false,
             hdr: false,
-            auto_fullscreen: true,
+            auto_fullscreen: false,
             binary_path: None,
             extra_args: Vec::new(),
         }
@@ -411,4 +412,18 @@ pub struct AppSettings {
     pub vndb: VndbSettings,
     /// Custom gamescope binary used for every game (per-game `binary_path` wins).
     pub gamescope_path: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gamescope_does_the_scaling_by_default() {
+        // The game must not be pushed to its own fullscreen mode unless the user opts in.
+        assert!(!GamescopeConfig::default().auto_fullscreen);
+        // Settings stored by older versions without the field keep the default.
+        let cfg: GamescopeConfig = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(cfg.enabled && !cfg.auto_fullscreen);
+    }
 }

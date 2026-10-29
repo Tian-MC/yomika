@@ -163,7 +163,7 @@ pub enum GamescopeFilter {
     Anime4k,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GamescopeConfig {
     pub enabled: bool,
@@ -198,30 +198,6 @@ pub struct GamescopeConfig {
     pub binary_path: Option<PathBuf>,
     /// Appended verbatim (as separate argv entries) before `--`.
     pub extra_args: Vec<String>,
-}
-
-impl Default for GamescopeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            game_width: None,
-            game_height: None,
-            output_width: None,
-            output_height: None,
-            window_mode: WindowMode::default(),
-            scaler: GamescopeScaler::default(),
-            filter: GamescopeFilter::default(),
-            sharpness: None,
-            fps_limit: None,
-            fps_limit_unfocused: None,
-            prefer_output: None,
-            force_grab_cursor: false,
-            hdr: false,
-            auto_fullscreen: false,
-            binary_path: None,
-            extra_args: Vec::new(),
-        }
-    }
 }
 
 /// Wine/Proton-GE fullscreen FSR hack (`WINE_FULLSCREEN_FSR`). This is NOT

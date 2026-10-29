@@ -257,7 +257,7 @@ mod tests {
         env.library.save_settings(env.game.id, &settings).unwrap();
 
         let resolved = resolve_launch(&env.library, &env.runtime, &env.graphics, env.game.id).unwrap();
-        assert!(resolved.prefix.path.starts_with(&env._tmp.path()), "prefix must live in the tempdir");
+        assert!(resolved.prefix.path.starts_with(env._tmp.path()), "prefix must live in the tempdir");
         assert_eq!(resolved.command.env.get("LANG").map(String::as_str), Some("ja_JP.UTF-8"));
 
         let session = env.runtime.start_session(resolved.to_request()).await.unwrap();

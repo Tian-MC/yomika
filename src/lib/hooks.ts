@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
-import type { AppError, CommandArgs, CommandName, CommandResult, EventMap } from "../contract";
-import { call, listen, normalizeError, type Unlisten } from "./api";
+import type { AppError, CommandArgs, CommandName, CommandResult } from "../contract";
+import { call, listen, normalizeError, type UiEventMap, type Unlisten } from "./api";
 
 export interface CommandState<T> {
   data: T | undefined;
@@ -65,7 +65,7 @@ export function useCommand<K extends CommandName>(cmd: K, args: CommandArgs<K> |
       setSnap((s) => ({
         key: s.key ?? key,
         error: null,
-        data: typeof next === "function" ? (next as (p: R | undefined) => R)(s.data) : next,
+        data: typeof next === "function" ? (next)(s.data) : next,
       }));
     },
     [key],
@@ -83,7 +83,7 @@ export function useCommand<K extends CommandName>(cmd: K, args: CommandArgs<K> |
 }
 
 /** Subscribe to a backend event for the lifetime of the component. */
-export function useEvent<E extends keyof EventMap>(event: E, handler: (payload: EventMap[E]) => void): void {
+export function useEvent<E extends keyof UiEventMap>(event: E, handler: (payload: UiEventMap[E]) => void): void {
   const onEvent = useEffectEvent(handler);
   useEffect(() => {
     let disposed = false;

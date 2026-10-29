@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import { useCommand, useDebounced } from "../lib/hooks";
 import { Button } from "./ui/Button";
 import { Badge, Callout, ErrorState, Section, Spinner } from "./ui/feedback";
-import { ArgsField, NumberField, Segmented, SelectField, SwitchRow } from "./ui/form";
+import { ArgsField, NumberField, OptionalTextField, Segmented, SelectField, SwitchRow } from "./ui/form";
 
 export type Errors = Record<string, string>;
 
@@ -116,7 +116,7 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
               value={gs.filter}
               onChange={(v) => setGs({ filter: v as GamescopeFilter })}
               hint={t("gfx.filterHint")}
-              options={(["linear", "nearest", "fsr", "nis", "pixel"] as const).map((v) => ({ value: v, label: t(`gfx.filter.${v}`) }))}
+              options={(["linear", "nearest", "fsr", "nis", "sgsr", "pixel"] as const).map((v) => ({ value: v, label: t(`gfx.filter.${v}`) }))}
             />
             <NumberField label={t("gfx.sharpness")} value={gs.sharpness} onChange={(sharpness) => setGs({ sharpness })} min={0} max={20} step={1} disabled={!usesSharpness} hint={usesSharpness ? t("gfx.sharpnessHint") : t("gfx.sharpnessOnlyFsr")} error={err("gamescope.sharpness")} placeholder={t("gfx.default")} />
           </div>
@@ -167,6 +167,12 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
                   .join("\n")}
               </pre>
             )}
+            {preview.data.commandPreview && <pre className="code-block wrap">{preview.data.commandPreview}</pre>}
+            {preview.data.companions?.map((c) => (
+              <pre className="code-block wrap" key={c}>
+                {c}
+              </pre>
+            ))}
             {preview.data.warnings.map((w) => (
               <Callout key={w} tone="warning">
                 {w}
@@ -246,7 +252,10 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
             />
             <NumberField label={t("gfx.upscaler.scale")} value={value.upscaler.scale} onChange={(scale) => setUp({ scale })} min={1} max={8} step={0.5} disabled={!value.upscaler.enabled} error={err("upscaler.scale")} placeholder={t("gfx.auto")} suffix="×" />
           </div>
-          <ArgsField label={t("gfx.extraArgs")} value={value.upscaler.extraArgs} onChange={(extraArgs) => setUp({ extraArgs })} />
+          <div className="grid-2">
+            <OptionalTextField label={t("gfx.upscaler.targetTitle")} value={value.upscaler.targetTitle} onChange={(targetTitle) => setUp({ targetTitle })} disabled={!value.upscaler.enabled} hint={t("gfx.upscaler.targetTitleHint")} />
+            <ArgsField label={t("gfx.extraArgs")} value={value.upscaler.extraArgs} onChange={(extraArgs) => setUp({ extraArgs })} />
+          </div>
         </fieldset>
         {upscaler.data?.tool && (
           <p className="field-hint">

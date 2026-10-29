@@ -254,7 +254,7 @@ export function Segmented<V extends string>({ label, value, onChange, options, d
   const id = useId();
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const idx = options.findIndex((o) => o.value === value);
-    let next = idx;
+    let next: number;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % options.length;
     else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + options.length) % options.length;
     else return;

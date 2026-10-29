@@ -77,6 +77,16 @@ function GameDetail({ gameId }: { gameId: number }) {
     }
   }, [libGame, game, gameQ]);
 
+  const doSave = async () => {
+    if (Object.keys(form.errors).length > 0) {
+      toasts.push({ kind: "warning", title: t("form.fixErrors", { n: Object.keys(form.errors).length }) });
+      return false;
+    }
+    const ok = await form.save();
+    if (ok) toasts.success(t("form.saved"));
+    return ok;
+  };
+
   const blocker = useBlocker(({ currentLocation, nextLocation }) => form.dirty && currentLocation.pathname !== nextLocation.pathname);
 
   useEffect(() => {
@@ -91,15 +101,6 @@ function GameDetail({ gameId }: { gameId: number }) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const doSave = async () => {
-    if (Object.keys(form.errors).length > 0) {
-      toasts.push({ kind: "warning", title: t("form.fixErrors", { n: Object.keys(form.errors).length }) });
-      return false;
-    }
-    const ok = await form.save();
-    if (ok) toasts.success(t("form.saved"));
-    return ok;
-  };
 
   if (gameQ.error && !game) {
     return (

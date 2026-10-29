@@ -31,7 +31,7 @@ export function defaultGraphicsConfig(): GraphicsConfig {
       extraArgs: [],
     },
     wineFsr: { enabled: false, strength: null },
-    upscaler: { enabled: false, backend: null, model: null, preset: null, scale: null, extraArgs: [] },
+    upscaler: { enabled: false, backend: null, model: null, preset: null, scale: null, targetTitle: null, extraArgs: [] },
   };
 }
 

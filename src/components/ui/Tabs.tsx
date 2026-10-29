@@ -22,7 +22,7 @@ export function Tabs<V extends string>({ tabs, value, onChange, label, idBase }:
   const base = idBase ?? generated;
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const idx = tabs.findIndex((t) => t.value === value);
-    let next = idx;
+    let next: number;
     if (e.key === "ArrowRight") next = (idx + 1) % tabs.length;
     else if (e.key === "ArrowLeft") next = (idx - 1 + tabs.length) % tabs.length;
     else if (e.key === "Home") next = 0;

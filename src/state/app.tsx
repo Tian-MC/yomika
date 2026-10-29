@@ -135,8 +135,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [languagesError, setLanguagesError] = useState<AppError | null>(null);
 
   useEffect(() => {
-    void reloadSettings();
-    void reloadGames();
+    call("settings_get_app", {})
+      .then((s) => {
+        setAppSettings(s);
+        setSettingsError(null);
+      })
+      .catch((e: unknown) => setSettingsError(normalizeError(e)));
+    call("library_list_games", { query: {} })
+      .then((g) => {
+        setGames(g);
+        setGamesError(null);
+      })
+      .catch((e: unknown) => {
+        setGamesError(normalizeError(e));
+        setGames((g) => g ?? []);
+      });
     call("session_list", {})
       .then((list) => setSessionMap((m) => Object.fromEntries([...list.map((s) => [s.id, s] as const), ...Object.entries(m)])))
       .catch(() => undefined);
@@ -146,7 +159,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setLanguagesError(normalizeError(e));
         setLanguages([]);
       });
-  }, [reloadSettings, reloadGames]);
+  }, []);
 
   useEffect(() => {
     const timers = taskTimers.current;

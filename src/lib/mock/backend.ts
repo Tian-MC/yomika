@@ -57,6 +57,8 @@ const nowS = () => Math.floor(Date.now() / 1000);
 
 function fail(code: ErrorCode, message: string, details: string | null = null): never {
   const err: AppError = { code, message, details };
+  // Mirrors Tauri: commands reject with a plain AppError object.
+  // eslint-disable-next-line @typescript-eslint/only-throw-error
   throw err;
 }
 
@@ -378,6 +380,24 @@ function prettyTitle(name: string): string {
     .replace(/\s+/g, " ") || "New game";
 }
 
+function createBackup(gameId: number, label: string | null, kind: SaveBackup["kind"]): SaveBackup {
+  const game = getGame(gameId);
+  const id = state.nextId++;
+  const b: SaveBackup = {
+    id,
+    gameId,
+    createdAt: nowS(),
+    label: label?.trim() || null,
+    kind,
+    sizeBytes: 1_500_000 + Math.floor(Math.random() * 500_000),
+    fileCount: 40 + Math.floor(Math.random() * 10),
+    archivePath: `${HOME}/.local/share/vn-launcher/backups/${gameId}/backup-${id}.tar.zst`,
+    sourcePaths: [`${game.installDir}/savedata`, ...(state.manualSaves.get(gameId) ?? [])],
+  };
+  state.backups.push(b);
+  return b;
+}
+
 const handlers: Handlers = {
   // ------------------------------------------------------------- library
   library_list_games: ({ query }) => {
@@ -534,30 +554,17 @@ const handlers: Handlers = {
   },
   saves_set_locations: ({ gameId, paths }) => {
     state.manualSaves.set(gameId, [...paths]);
-    return handlers.saves_detect({ gameId }) as CommandResult<"saves_detect">;
+    return handlers.saves_detect({ gameId });
   },
   saves_list_backups: ({ gameId }) => state.backups.filter((b) => b.gameId === gameId).sort((a, b) => b.createdAt - a.createdAt),
-  saves_create_backup: ({ gameId, label }) => {
-    const game = getGame(gameId);
-    const id = state.nextId++;
-    const b: SaveBackup = {
-      id,
-      gameId,
-      createdAt: nowS(),
-      label: label?.trim() || null,
-      sizeBytes: 1_500_000 + Math.floor(Math.random() * 500_000),
-      archivePath: `${HOME}/.local/share/vn-launcher/backups/${gameId}/backup-${id}.tar.zst`,
-      sourcePaths: [`${game.installDir}/savedata`, ...(state.manualSaves.get(gameId) ?? [])],
-    };
-    state.backups.push(b);
-    return b;
-  },
+  saves_create_backup: ({ gameId, label }) => createBackup(gameId, label ?? null, "manual"),
   saves_restore_backup: ({ backupId, confirm }) => {
     const b = state.backups.find((x) => x.id === backupId) ?? fail("notFound", `Backup ${backupId} not found`);
     if (confirm !== true) fail("confirmationRequired", "Restoring overwrites current saves; confirm to continue");
-    const safety = handlers.saves_create_backup({ gameId: b.gameId, label: `Safety backup before restoring #${b.id}` }) as SaveBackup;
-    return { restored: b, safetyBackup: safety };
+    const safety = createBackup(b.gameId, `Safety backup before restoring #${b.id}`, "safety");
+    return { restored: b, safetyBackup: safety, filesRestored: b.fileCount };
   },
+
 
   // ------------------------------------------------------------- runtime
   runtime_list_runners: () => state.runners,
@@ -672,8 +679,9 @@ const handlers: Handlers = {
       if (f.required && (config[f.key] === undefined || config[f.key] === null || config[f.key] === "")) fail("invalidInput", `${f.label} is required`);
     }
     p.config = { ...config };
-    if (apiKey === null) p.hasApiKey = false;
-    else if (typeof apiKey === "string" && apiKey.length > 0) p.hasApiKey = true;
+    // undefined/null = keep, "" = delete, non-empty = store.
+    if (apiKey === "") p.hasApiKey = false;
+    else if (typeof apiKey === "string") p.hasApiKey = true;
     p.configured = !p.requiresApiKey || p.hasApiKey;
     return p;
   },
@@ -753,7 +761,9 @@ const handlers: Handlers = {
     const ocr = t.enabled && (t.extraction === "ocr" || t.extraction === "hookAndOcr") ? "active" : "inactive";
     return { sessionId, hook, ocr, diagnostics: t.enabled ? [] : ["Translation is disabled for this game."] };
   },
-  overlay_show: () => {
+  overlay_show: ({ config }) => {
+    const gameCfg = config ?? defaultGameSettings(state.app).translation.overlay;
+    mockEmit("vnl://overlay-config", gameCfg);
     log("info", "overlay", "Overlay window shown (demo: open #/overlay in another tab)");
     return null;
   },

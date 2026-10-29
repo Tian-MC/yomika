@@ -19,7 +19,7 @@ const overrides = new Map<CommandName, Override>();
 const LATENCY_MS = import.meta.env.MODE === "test" ? 0 : 90;
 
 export async function mockInvoke<K extends CommandName>(cmd: K, args: CommandArgs<K>): Promise<CommandResult<K>> {
-  const clonedArgs = structuredClone(args ?? {}) as CommandArgs<K>;
+  const clonedArgs = structuredClone<CommandArgs<K>>(args);
   callLog.push({ cmd, args: clonedArgs });
   seedStartupLogs();
   await new Promise((r) => setTimeout(r, LATENCY_MS));

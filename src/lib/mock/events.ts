@@ -1,24 +1,24 @@
 // Fake event bus used by the mock backend (browser demo + tests only).
-import type { EventMap } from "../../contract";
+import type { UiEventMap } from "../api";
 
-type Handler<E extends keyof EventMap> = (payload: EventMap[E]) => void;
+type AnyHandler = (payload: unknown) => void;
+const handlers = new Map<string, Set<AnyHandler>>();
 
-const handlers: { [E in keyof EventMap]?: Set<Handler<E>> } = {};
-
-export function mockListen<E extends keyof EventMap>(event: E, handler: Handler<E>): () => void {
-  let set = handlers[event] as Set<Handler<E>> | undefined;
+export function mockListen<E extends keyof UiEventMap>(event: E, handler: (payload: UiEventMap[E]) => void): () => void {
+  let set = handlers.get(event);
   if (!set) {
     set = new Set();
-    (handlers as Record<string, Set<Handler<E>>>)[event] = set;
+    handlers.set(event, set);
   }
-  set.add(handler);
+  const h = handler as AnyHandler;
+  set.add(h);
   return () => {
-    set.delete(handler);
+    set.delete(h);
   };
 }
 
-export function mockEmit<E extends keyof EventMap>(event: E, payload: EventMap[E]): void {
-  const set = handlers[event] as Set<Handler<E>> | undefined;
+export function mockEmit<E extends keyof UiEventMap>(event: E, payload: UiEventMap[E]): void {
+  const set = handlers.get(event);
   if (!set) return;
   for (const h of [...set]) {
     try {
@@ -30,5 +30,5 @@ export function mockEmit<E extends keyof EventMap>(event: E, payload: EventMap[E
 }
 
 export function clearMockListeners(): void {
-  for (const key of Object.keys(handlers)) delete (handlers as Record<string, unknown>)[key];
+  handlers.clear();
 }

@@ -130,7 +130,7 @@ function TopBar() {
       else next.delete("q");
       setParams(next, { replace: true });
     } else {
-      navigate(value ? `/?q=${encodeURIComponent(value)}` : "/");
+      void navigate(value ? `/?q=${encodeURIComponent(value)}` : "/");
     }
   };
 

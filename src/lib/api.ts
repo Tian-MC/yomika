@@ -4,9 +4,14 @@
 // is never loaded.
 import { invoke, isTauri as tauriIsTauri } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import type { AppError, CommandArgs, CommandName, CommandResult, ErrorCode, EventMap } from "../contract";
+import type { AppError, CommandArgs, CommandName, CommandResult, ErrorCode, EventMap, OverlayConfig } from "../contract";
+import type { OVERLAY_CONFIG_EVENT } from "../contract/translation";
+import type * as MockNs from "./mock";
 
-export type EventName = keyof EventMap;
+/** Backend events plus window-targeted ones (overlay config). */
+export type UiEventMap = EventMap & { [K in typeof OVERLAY_CONFIG_EVENT]: OverlayConfig };
+
+export type EventName = keyof UiEventMap;
 export type Unlisten = () => void;
 
 const ERROR_CODES: readonly ErrorCode[] = [
@@ -68,7 +73,7 @@ export function normalizeError(error: unknown): AppError {
     if (typeof v.message === "string") return { code: "internal", message: v.message, details: safeStringify(error) };
     return { code: "internal", message: "Unexpected error", details: safeStringify(error) };
   }
-  return { code: "internal", message: "Unexpected error", details: error === undefined ? null : String(error) };
+  return { code: "internal", message: "Unexpected error", details: error === undefined ? null : safeStringify(error) };
 }
 
 function safeStringify(value: unknown): string {
@@ -79,7 +84,7 @@ function safeStringify(value: unknown): string {
   }
 }
 
-type MockModule = typeof import("./mock");
+type MockModule = typeof MockNs;
 let mockModule: Promise<MockModule> | null = null;
 function loadMock(): Promise<MockModule> {
   mockModule ??= import("./mock");
@@ -92,11 +97,13 @@ function loadMock(): Promise<MockModule> {
 export async function call<K extends CommandName>(cmd: K, args: CommandArgs<K>): Promise<CommandResult<K>> {
   try {
     if (isTauri()) {
-      return await invoke<CommandResult<K>>(cmd, args as Record<string, unknown>);
+      return await invoke<CommandResult<K>>(cmd, args);
     }
     const mock = await loadMock();
     return await mock.mockInvoke(cmd, args);
   } catch (error) {
+    // Contract: every rejection is a plain AppError object (not an Error instance).
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
     throw normalizeError(error);
   }
 }
@@ -104,9 +111,9 @@ export async function call<K extends CommandName>(cmd: K, args: CommandArgs<K>):
 /**
  * Subscribe to a backend event. Resolves with an unlisten function.
  */
-export async function listen<E extends EventName>(event: E, handler: (payload: EventMap[E]) => void): Promise<Unlisten> {
+export async function listen<E extends EventName>(event: E, handler: (payload: UiEventMap[E]) => void): Promise<Unlisten> {
   if (isTauri()) {
-    return tauriListen<EventMap[E]>(event, (e) => handler(e.payload));
+    return tauriListen<UiEventMap[E]>(event, (e) => handler(e.payload));
   }
   const mock = await loadMock();
   return mock.mockListen(event, handler);

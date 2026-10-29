@@ -55,7 +55,7 @@ export function LibraryPage() {
     setStatus(null);
     setFavoriteOnly(false);
     setTag(null);
-    if (search) navigate("/", { replace: true });
+    if (search) void navigate("/", { replace: true });
   };
 
   if (games === null) return <LoadingBlock />;

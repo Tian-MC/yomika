@@ -41,6 +41,7 @@ impl HostSentence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMessageKind {
     PipeConnected,
+    ProcessConnected(u32),
     AlreadyInjected,
     ArchitectureMismatch,
     InjectFailed,
@@ -63,6 +64,12 @@ pub fn classify_console(msg: &str) -> HostMessageKind {
         HostMessageKind::InjectFailed
     } else if m.contains("already injected") || m.contains("已经注入") {
         HostMessageKind::AlreadyInjected
+    } else if let Some(pid) = msg.trim().strip_prefix("Connected process ").and_then(|s| s.trim().parse().ok()) {
+        HostMessageKind::ProcessConnected(pid)
+    } else if let Some(pid) =
+        msg.trim().strip_prefix("进程 ").and_then(|s| s.strip_suffix(" 已连接")).and_then(|s| s.trim().parse().ok())
+    {
+        HostMessageKind::ProcessConnected(pid)
     } else if m.contains("pipe connected") || m.contains("管道已连接") {
         HostMessageKind::PipeConnected
     } else if m.contains("failed to insert hook") || m.contains("too many hooks") {
@@ -107,6 +114,7 @@ pub struct HostParser {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostEvent {
     Sentence(HostSentence),
+    Console(String),
     Usage,
     /// Output that is not part of the protocol (runner/Wine noise).
     Noise(String),
@@ -116,7 +124,14 @@ impl HostParser {
     pub fn feed_line(&mut self, line: &str) -> Vec<HostEvent> {
         let line = line.trim_end_matches(['\r', '\n']);
         let mut out = Vec::new();
-        if let Some(s) = parse_header_line(line) {
+        if let Some(message) = line.strip_prefix("[Console] ") {
+            out.extend(self.flush());
+            out.push(HostEvent::Console(message.to_string()));
+        } else if line.starts_with("[Hook #") {
+            // Host lifecycle metadata must never become a dialogue continuation.
+            out.extend(self.flush());
+            out.push(HostEvent::Noise(line.to_string()));
+        } else if let Some(s) = parse_header_line(line) {
             out.extend(self.flush());
             self.pending = Some(s);
         } else if line.starts_with("Usage:") {
@@ -281,6 +296,38 @@ mod tests {
         assert!(matches!(p.flush(), Some(HostEvent::Sentence(s)) if s.name == "SomeName"));
         assert_eq!(p.feed_line("Usage: {'attach'|'detach'|hookcode} -Pprocessid"), vec![HostEvent::Usage]);
         assert_eq!(p.feed_line("wine: noise"), vec![HostEvent::Noise("wine: noise".into())]);
+    }
+
+    #[test]
+    fn parses_real_bgi_console_output_without_creating_text_threads() {
+        let mut parser = HostParser::default();
+        for text in ["Connected process 336", "进程 336 已连接", "匹配到 BGI 引擎", "注入钩子: EmbedBGI 7BE5B820"]
+        {
+            assert_eq!(parser.feed_line(&format!("[Console] {text}")), vec![HostEvent::Console(text.into())]);
+        }
+        assert_eq!(classify_console("Connected process 336"), HostMessageKind::ProcessConnected(336));
+        assert_eq!(classify_console("进程 336 已连接"), HostMessageKind::ProcessConnected(336));
+        assert_eq!(classify_console("Connected process invalid"), HostMessageKind::Other);
+        assert_eq!(classify_console("进程 336 未连接"), HostMessageKind::Other);
+        assert_eq!(classify_console("匹配到 BGI 引擎"), HostMessageKind::Other);
+        assert_eq!(classify_console("注入钩子: EmbedBGI 7BE5B820"), HostMessageKind::Other);
+        let created = "[Hook #0 created] Handle: 0";
+        assert_eq!(parser.feed_line(created), vec![HostEvent::Noise(created.into())]);
+        assert!(parser.flush().is_none());
+    }
+
+    #[test]
+    fn console_and_hook_metadata_do_not_extend_legacy_dialogue() {
+        let mut parser = HostParser::default();
+        parser.feed_line(SAMPLE_SHORT);
+        let events = parser.feed_line("[Console] Connected process 336");
+        assert!(matches!(&events[0], HostEvent::Sentence(s) if s.text == "「とある有名お風呂」"));
+        assert_eq!(events[1], HostEvent::Console("Connected process 336".into()));
+        parser.feed_line(SAMPLE_FULL);
+        let events = parser.feed_line("[Hook #0 created] Handle: 0");
+        assert!(matches!(&events[0], HostEvent::Sentence(s) if s.text == parse_header_line(SAMPLE_FULL).unwrap().text));
+        assert!(matches!(&events[1], HostEvent::Noise(_)));
+        assert!(parser.flush().is_none());
     }
 
     #[test]

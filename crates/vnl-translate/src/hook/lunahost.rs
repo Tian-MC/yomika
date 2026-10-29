@@ -31,7 +31,8 @@ use super::HookAdapter;
 use super::pe::{PeArch, pe_arch};
 use super::process::{PidMatch, find_game, linux_pids_for_exe, list_windows_processes};
 use super::protocol::{
-    HostEvent, HostMessageKind, HostParser, StreamDecoder, classify_console, encode_utf16le, validate_hook_code,
+    HostEvent, HostMessageKind, HostParser, HostSentence, StreamDecoder, classify_console, encode_utf16le,
+    validate_hook_code,
 };
 use super::threads::ThreadRegistry;
 use crate::source::{SourceStatus, StatusCell, TextEvent, TextSender, TextSource};
@@ -461,11 +462,14 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
             return None;
         }
         match ev {
-            HostEvent::Sentence(s) if s.is_console() => {
-                let kind = classify_console(&s.text);
-                ctx.status.push(format!("Host: {}", s.text.trim()));
+            HostEvent::Console(text) | HostEvent::Sentence(HostSentence { pid: 0, handle: 0, text, .. }) => {
+                let kind = classify_console(&text);
+                ctx.status.push(format!("Host: {}", text.trim()));
                 match kind {
-                    HostMessageKind::PipeConnected => {
+                    HostMessageKind::ProcessConnected(other) if other != pid => {
+                        ctx.status.push(format!("Ignoring connection for Windows PID {other}; expected {pid}."));
+                    }
+                    HostMessageKind::PipeConnected | HostMessageKind::ProcessConnected(_) => {
                         *connected = true;
                         ctx.status.set_state(TextSourceState::Active);
                     }
@@ -960,6 +964,54 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), adapter.stop()).await.unwrap();
         assert!(nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None).is_err());
         assert!(adapter.select_thread(None).is_err());
+        adapter.stop().await;
+    }
+
+    #[tokio::test]
+    async fn real_bgi_console_attach_stays_active_and_warns_about_missing_text() {
+        // Exercise each confirmation independently: either language must prevent timeout.
+        for confirmation in ["[Console] Connected process 336", "[Console] 进程 336 已连接"] {
+            let output = format!(
+                "{confirmation}\r\n[Console] 匹配到 BGI 引擎\r\n[Console] 注入钩子: EmbedBGI 7BE5B820\r\n[Hook #0 created] Handle: 0\r\n"
+            );
+            let (tmp, mut adapter) = setup(
+                &output,
+                "\"Yorikure.exe\",\"336\",\"Console\",\"1\",\"9 K\"\n",
+                0x14C,
+                "LunaHostCLI32.exe",
+                0x14C,
+            );
+            let game = tmp.path().join("Yorikure.exe");
+            std::fs::rename(&adapter.game_exe, &game).unwrap();
+            adapter.game_exe = game;
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+            adapter.start(tx).await.unwrap();
+            wait_for(&adapter, |s| s.diagnostics.iter().any(|d| d.contains("No text received"))).await;
+            let status = adapter.status();
+            assert_eq!(status.state, TextSourceState::Active, "{:?}", status.diagnostics);
+            assert!(!status.diagnostics.iter().any(|d| d.contains("attach timed out")));
+            assert!(status.hook_threads.is_empty());
+            assert!(rx.try_recv().is_err());
+            adapter.stop().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn console_confirmation_for_another_pid_does_not_cancel_attach_timeout() {
+        let (_tmp, adapter) = setup(
+            "[Console] Connected process 336\r\n[Console] 进程 336 已连接\r\n",
+            TASKLIST,
+            0x14C,
+            "LunaHostCLI32.exe",
+            0x14C,
+        );
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Failed).await;
+        let status = adapter.status();
+        assert!(status.diagnostics.iter().any(|d| d.contains("Windows PID 336; expected 356")));
+        assert!(status.diagnostics.iter().any(|d| d.contains("attach timed out")));
+        assert!(status.hook_threads.is_empty());
         adapter.stop().await;
     }
 

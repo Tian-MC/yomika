@@ -25,6 +25,13 @@ pub type LogFile = Arc<Mutex<std::fs::File>>;
 pub fn spawn_group(spec: &CommandSpec, flatpak: bool) -> Result<Child, AppError> {
     let spec = finalize_for_spawn(spec, flatpak);
     let mut cmd = tokio::process::Command::from(spec.to_std_command());
+    // AppImages may export Python paths under /tmp/.mount_*/usr. If inherited,
+    // Proton's Python interpreter looks there for its standard library and
+    // fails with "No module named 'encodings'". Clean the child environment
+    // only; do not change the launcher's own environment.
+    for key in ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "PYTHONEXECUTABLE"] {
+        cmd.env_remove(key);
+    }
     cmd.process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
     cmd.spawn().map_err(|e| {
         let code =
@@ -301,6 +308,19 @@ mod tests {
     use super::*;
     use vnl_core::AppEvent;
     use vnl_core::events::RecordingSink;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawned_commands_do_not_inherit_appimage_python_paths() {
+        let spec = CommandSpec::new("/usr/bin/env")
+            .env("PYTHONHOME", "/tmp/.mount_VNLauncher/usr")
+            .env("PYTHONPATH", "/tmp/.mount_VNLauncher/usr/share/pyshared");
+        let child = spawn_group(&spec, false).unwrap();
+        let output = child.wait_with_output().await.unwrap();
+        assert!(output.status.success());
+        let env = String::from_utf8_lossy(&output.stdout);
+        assert!(!env.lines().any(|line| line.starts_with("PYTHONHOME=")), "{env}");
+        assert!(!env.lines().any(|line| line.starts_with("PYTHONPATH=")), "{env}");
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn captures_lossy_output_and_kills_tree() {

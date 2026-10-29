@@ -16,6 +16,7 @@
 
 pub mod deps;
 pub mod display;
+pub mod fullscreen;
 pub mod gamescope;
 pub mod prefix;
 pub mod probe;

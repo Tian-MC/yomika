@@ -416,6 +416,8 @@ export const en = {
   "gfx.primary": "primary",
   "gfx.grabCursor": "Force grab cursor",
   "gfx.grabCursorHint": "Fixes the mouse escaping the window in some engines.",
+  "gfx.autoFullscreen": "Switch the game to fullscreen",
+  "gfx.autoFullscreenHint": "Sends Alt+Enter once if the game starts windowed. Windowed games inside gamescope show black bars from the hidden window frame.",
   "gfx.hdr": "HDR",
   "gfx.hdrHint": "Requires a Wayland session and an HDR display.",
   "gfx.hdrNeedsWayland": "Your session is not Wayland: HDR will not work.",

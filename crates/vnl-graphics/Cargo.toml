@@ -15,6 +15,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 which.workspace = true
+x11rb = { version = "0.14", features = ["xtest"] }
 
 [dev-dependencies]
 tempfile.workspace = true

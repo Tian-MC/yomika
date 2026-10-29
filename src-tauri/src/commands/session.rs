@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::State;
@@ -13,6 +14,7 @@ use vnl_core::{
 use vnl_runtime::RuntimeService;
 
 use crate::launch::{ResolvedLaunch, resolve_launch};
+use crate::sink::TauriSink;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -73,6 +75,11 @@ pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Resu
 
     let session = state.runtime.start_session(resolved.to_request()).await?;
 
+    let gamescope = &resolved.settings.graphics.gamescope;
+    if gamescope.enabled && gamescope.auto_fullscreen {
+        spawn_fullscreen_assist(state.runtime.clone(), state.sink.clone(), session.id.clone());
+    }
+
     let translation = vnl_translate::resolve_config(&resolved.settings.translation, &resolved.app_settings.translation);
     if translation.enabled && translation.extraction != ExtractionMode::Disabled {
         let ctx = vnl_translate::SessionContext {
@@ -102,6 +109,51 @@ pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Resu
     }
 
     Ok(session)
+}
+
+/// Waits for gamescope's nested Xwayland display (from the session log) and
+/// switches a windowed game to fullscreen. See `vnl_graphics::fullscreen`.
+fn spawn_fullscreen_assist(runtime: Arc<RuntimeService>, sink: Arc<TauriSink>, session_id: String) {
+    use vnl_graphics::fullscreen::{FullscreenOutcome, ensure_game_fullscreen, parse_xwayland_display};
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let log =
+            |level, message: String| sink.log(LogEntry::new(level, "graphics", message).session(session_id.clone()));
+        let started = Instant::now();
+        let display = loop {
+            if runtime.session(&session_id).is_none_or(|s| s.state.is_finished()) {
+                return;
+            }
+            let found =
+                sink.recent_logs(2000, Some(&session_id)).iter().rev().find_map(|l| parse_xwayland_display(&l.message));
+            if let Some(display) = found {
+                break display;
+            }
+            if started.elapsed() > Duration::from_secs(30) {
+                log(LogLevel::Warn, "fullscreen assist: gamescope's Xwayland display not found in its log".into());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        // Generous timeout: the first launch of a new prefix can take a while.
+        match ensure_game_fullscreen(&display, Duration::from_secs(180)) {
+            Ok(FullscreenOutcome::Switched) => {
+                log(LogLevel::Info, format!("fullscreen assist: switched the game to fullscreen (display {display})"))
+            }
+            Ok(FullscreenOutcome::AlreadyFullscreen) => {
+                log(LogLevel::Info, "fullscreen assist: game already fullscreen, nothing sent".into())
+            }
+            Ok(FullscreenOutcome::Unchanged(g)) => log(
+                LogLevel::Warn,
+                format!(
+                    "fullscreen assist: sent Alt+Enter but the window stayed {}x{}; enable fullscreen in the game's own settings or disable this option",
+                    g.width, g.height
+                ),
+            ),
+            Ok(FullscreenOutcome::NoWindow) => log(LogLevel::Warn, "fullscreen assist: no game window appeared".into()),
+            Err(e) => log(LogLevel::Warn, format!("fullscreen assist failed: {e}")),
+        }
+    });
 }
 
 #[tauri::command]

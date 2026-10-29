@@ -135,6 +135,7 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
           </div>
           <div className="grid-2">
             <SwitchRow label={t("gfx.grabCursor")} description={t("gfx.grabCursorHint")} checked={gs.forceGrabCursor} onChange={(forceGrabCursor) => setGs({ forceGrabCursor })} />
+            <SwitchRow label={t("gfx.autoFullscreen")} description={t("gfx.autoFullscreenHint")} checked={gs.autoFullscreen} onChange={(autoFullscreen) => setGs({ autoFullscreen })} />
             <SwitchRow label={t("gfx.hdr")} description={caps.data && caps.data.sessionType !== "wayland" ? t("gfx.hdrNeedsWayland") : t("gfx.hdrHint")} checked={gs.hdr} onChange={(hdr) => setGs({ hdr })} />
           </div>
           <ArgsField label={t("gfx.extraArgs")} value={gs.extraArgs} onChange={(extraArgs) => setGs({ extraArgs })} hint={t("gfx.extraArgsHint")} placeholder="--adaptive-sync" />

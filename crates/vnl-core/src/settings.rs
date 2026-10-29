@@ -161,7 +161,7 @@ pub enum GamescopeFilter {
     Sgsr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GamescopeConfig {
     pub enabled: bool,
@@ -184,8 +184,37 @@ pub struct GamescopeConfig {
     pub prefer_output: Option<String>,
     pub force_grab_cursor: bool,
     pub hdr: bool,
+    /// Switch a windowed game to its own fullscreen mode (one Alt+Enter,
+    /// only if its window does not already cover the nested display).
+    /// Windowed Wine games inside gamescope keep the empty Windows frame
+    /// area in their X window, which shows up as black bars and a slight
+    /// downscale; the game's fullscreen mode has no frame.
+    pub auto_fullscreen: bool,
     /// Appended verbatim (as separate argv entries) before `--`.
     pub extra_args: Vec<String>,
+}
+
+impl Default for GamescopeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            game_width: None,
+            game_height: None,
+            output_width: None,
+            output_height: None,
+            window_mode: WindowMode::default(),
+            scaler: GamescopeScaler::default(),
+            filter: GamescopeFilter::default(),
+            sharpness: None,
+            fps_limit: None,
+            fps_limit_unfocused: None,
+            prefer_output: None,
+            force_grab_cursor: false,
+            hdr: false,
+            auto_fullscreen: true,
+            extra_args: Vec::new(),
+        }
+    }
 }
 
 /// Wine/Proton-GE fullscreen FSR hack (`WINE_FULLSCREEN_FSR`). This is NOT

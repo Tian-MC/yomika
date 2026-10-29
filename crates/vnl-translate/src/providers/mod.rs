@@ -96,11 +96,20 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         accepts_api_key: true,
         fields: libretranslate::fields,
     },
-    ProviderSpec { id: deepl::ID, name: "DeepL API", requires_api_key: true, accepts_api_key: true, fields: deepl::fields },
+    ProviderSpec {
+        id: deepl::ID,
+        name: "DeepL API",
+        requires_api_key: true,
+        accepts_api_key: true,
+        fields: deepl::fields,
+    },
 ];
 
 pub fn spec(id: &str) -> Result<&'static ProviderSpec, AppError> {
-    PROVIDERS.iter().find(|p| p.id == id).ok_or_else(|| AppError::not_found(format!("unknown translation provider '{id}'")))
+    PROVIDERS
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| AppError::not_found(format!("unknown translation provider '{id}'")))
 }
 
 // --------------------------------------------------------------- helpers
@@ -110,7 +119,9 @@ pub fn spec(id: &str) -> Result<&'static ProviderSpec, AppError> {
 pub fn is_local_url(url: &str) -> bool {
     match reqwest::Url::parse(url) {
         Ok(u) => match u.host() {
-            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost") || d.to_ascii_lowercase().ends_with(".localhost"),
+            Some(url::Host::Domain(d)) => {
+                d.eq_ignore_ascii_case("localhost") || d.to_ascii_lowercase().ends_with(".localhost")
+            }
             Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
             None => false,
@@ -120,8 +131,8 @@ pub fn is_local_url(url: &str) -> bool {
 }
 
 pub fn validate_url(url: &str, field: &str) -> Result<reqwest::Url, AppError> {
-    let parsed =
-        reqwest::Url::parse(url.trim()).map_err(|e| AppError::invalid(format!("{field}: '{url}' is not a valid URL ({e})")))?;
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|e| AppError::invalid(format!("{field}: '{url}' is not a valid URL ({e})")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(AppError::invalid(format!("{field}: only http:// and https:// URLs are supported")));
     }
@@ -187,7 +198,11 @@ pub async fn check_status(provider: &str, resp: reqwest::Response) -> Result<req
         .ok()
         .and_then(|v| {
             v.get("error")
-                .and_then(|e| e.as_str().map(str::to_string).or_else(|| e.get("message").and_then(Value::as_str).map(str::to_string)))
+                .and_then(|e| {
+                    e.as_str()
+                        .map(str::to_string)
+                        .or_else(|| e.get("message").and_then(Value::as_str).map(str::to_string))
+                })
                 .or_else(|| v.get("message").and_then(Value::as_str).map(str::to_string))
         })
         .unwrap_or_else(|| body.chars().take(300).collect());
@@ -196,6 +211,12 @@ pub async fn check_status(provider: &str, resp: reqwest::Response) -> Result<req
 
 /// Removes `<think>…</think>` blocks some reasoning models emit and trims.
 pub fn clean_llm_output(s: &str) -> String {
+    // Some models (e.g. qwen3 via Ollama, even with `think:false`) emit their
+    // reasoning without the opening tag: keep only what follows `</think>`.
+    let s = match (s.find("<think>"), s.rfind("</think>")) {
+        (None, Some(end)) => &s[end + "</think>".len()..],
+        _ => s,
+    };
     let mut out = s.to_string();
     while let Some(start) = out.find("<think>") {
         match out[start..].find("</think>") {
@@ -281,7 +302,12 @@ impl ProviderRegistry {
 
     /// Validates and stores the non-secret config. `api_key`: `None` = keep,
     /// `Some(None)` = delete, `Some(Some(k))` = store securely.
-    pub fn configure(&self, id: &str, config: Map<String, Value>, api_key: Option<Option<String>>) -> Result<(), AppError> {
+    pub fn configure(
+        &self,
+        id: &str,
+        config: Map<String, Value>,
+        api_key: Option<Option<String>>,
+    ) -> Result<(), AppError> {
         let spec = spec(id)?;
         let fields = (spec.fields)();
         let mut clean = Map::new();
@@ -388,10 +414,10 @@ impl ProviderRegistry {
         let (kind, remote) = match id {
             ollama::ID => {
                 let probe = ollama::probe(&cfg).await;
-                if let Some(models) = &probe.models {
-                    if let Some(model_field) = fields.iter_mut().find(|f| f.key == "model") {
-                        model_field.options = Some(models.iter().map(|m| m.name.clone()).collect());
-                    }
+                if let Some(models) = &probe.models
+                    && let Some(model_field) = fields.iter_mut().find(|f| f.key == "model")
+                {
+                    model_field.options = Some(models.iter().map(|m| m.name.clone()).collect());
                 }
                 notes.extend(probe.notes.iter().cloned());
                 available = configured && probe.model_ok;
@@ -467,6 +493,7 @@ mod tests {
     fn think_blocks_removed() {
         assert_eq!(clean_llm_output("<think>hmm</think>\n Hello "), "Hello");
         assert_eq!(clean_llm_output("Hi<think>unterminated"), "Hi");
+        assert_eq!(clean_llm_output("Okay, let's think...\n</think>\n\nHello."), "Hello.");
     }
 
     #[test]
@@ -475,7 +502,11 @@ mod tests {
             text: "x".into(),
             source_language: Some("ja".into()),
             target_language: "de".into(),
-            glossary: vec![GlossaryHint { source: "先輩".into(), target: "Senpai".into(), kind: GlossaryKind::CharacterName }],
+            glossary: vec![GlossaryHint {
+                source: "先輩".into(),
+                target: "Senpai".into(),
+                kind: GlossaryKind::CharacterName,
+            }],
         };
         let p = llm_system_prompt(&req);
         assert!(p.contains("from Japanese into German (de)"));

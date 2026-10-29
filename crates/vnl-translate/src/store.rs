@@ -255,7 +255,15 @@ mod tests {
     use super::*;
 
     fn entry(game: Option<GameId>, src: &str, tgt: &str) -> GlossaryEntry {
-        GlossaryEntry { id: 0, game_id: game, kind: GlossaryKind::Term, source: src.into(), target: tgt.into(), note: None, enabled: true }
+        GlossaryEntry {
+            id: 0,
+            game_id: game,
+            kind: GlossaryKind::Term,
+            source: src.into(),
+            target: tgt.into(),
+            note: None,
+            enabled: true,
+        }
     }
 
     fn line(id: &str, game: Option<GameId>, ts: i64) -> TranslationLine {

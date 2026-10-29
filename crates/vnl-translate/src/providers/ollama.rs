@@ -23,7 +23,13 @@ pub fn fields() -> Vec<ProviderConfigField> {
         ProviderConfigField::new("baseUrl", "Server URL", FieldKind::Url, true, json!(DEFAULT_BASE_URL)),
         ProviderConfigField::new("model", "Model", FieldKind::Select, true, json!("")),
         ProviderConfigField::new("temperature", "Temperature", FieldKind::Number, false, json!(0.2)),
-        ProviderConfigField::new("disableThinking", "Disable reasoning (faster)", FieldKind::Boolean, false, json!(true)),
+        ProviderConfigField::new(
+            "disableThinking",
+            "Disable reasoning (faster)",
+            FieldKind::Boolean,
+            false,
+            json!(true),
+        ),
         ProviderConfigField::new(
             "allowRemoteModels",
             "Allow Ollama cloud models (sends text to ollama.com)",
@@ -82,7 +88,8 @@ pub async fn probe(cfg: &Map<String, Value>) -> OllamaProbe {
     let base = cfg_str(cfg, "baseUrl", DEFAULT_BASE_URL);
     let model = cfg_str(cfg, "model", "");
     let local = is_local_url(&base);
-    let mut p = OllamaProbe { models: None, model_ok: false, remote: !local || is_cloud_model_name(&model), notes: vec![] };
+    let mut p =
+        OllamaProbe { models: None, model_ok: false, remote: !local || is_cloud_model_name(&model), notes: vec![] };
     if !local {
         p.notes.push(format!("Server {base} is not on this machine; not probed."));
         p.model_ok = !model.is_empty();
@@ -169,7 +176,10 @@ impl OllamaProvider {
             // Best effort: if listing fails, the chat call reports the real error.
             list_models(&self.base_url)
                 .await
-                .map(|ms| ms.iter().any(|m| (m.name == self.model || m.name == format!("{}:latest", self.model)) && m.is_remote()))
+                .map(|ms| {
+                    ms.iter()
+                        .any(|m| (m.name == self.model || m.name == format!("{}:latest", self.model)) && m.is_remote())
+                })
                 .unwrap_or(false)
         } else {
             false
@@ -334,7 +344,12 @@ mod tests {
             ]})))
             .mount(&server)
             .await;
-        Mock::given(method("POST")).and(path("/api/chat")).respond_with(ResponseTemplate::new(500)).expect(0).mount(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
         let err = provider(&server.uri(), "big").translate(&req()).await.unwrap_err();
         assert!(err.message.contains("cloud model"));
         let err = provider(&server.uri(), "x:cloud").translate(&req()).await.unwrap_err();

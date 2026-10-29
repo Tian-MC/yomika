@@ -58,10 +58,11 @@ impl EventSink for TauriSink {
     fn emit(&self, event: AppEvent) {
         let result = match &event {
             AppEvent::Session(info) => {
-                if info.state.is_finished() && self.finished_sessions.lock().unwrap().insert(info.id.clone()) {
-                    if let Some(handler) = self.on_session_end.get() {
-                        handler(info);
-                    }
+                if info.state.is_finished()
+                    && self.finished_sessions.lock().unwrap().insert(info.id.clone())
+                    && let Some(handler) = self.on_session_end.get()
+                {
+                    handler(info);
                 }
                 self.app.emit("vnl://session", info)
             }

@@ -148,6 +148,9 @@ pub struct OcrCaptureRequest {
     pub capture: Option<String>,
     /// X11 display to capture (e.g. gamescope's nested `:2`); default `$DISPLAY`.
     pub display: Option<String>,
+    /// X11 window id (e.g. `0x3000003`); default: the game's window found by
+    /// its WM_CLASS (= exe name under Wine), else the root window.
+    pub window_id: Option<String>,
     /// OCR an existing image instead of capturing the screen.
     pub image_path: Option<std::path::PathBuf>,
 }
@@ -162,6 +165,7 @@ impl Default for OcrCaptureRequest {
             translate: true,
             capture: None,
             display: None,
+            window_id: None,
             image_path: None,
         }
     }

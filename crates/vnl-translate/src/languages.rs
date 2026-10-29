@@ -47,7 +47,11 @@ const LANGUAGES: &[(&str, &str, &str)] = &[
 pub fn languages() -> Vec<Language> {
     LANGUAGES
         .iter()
-        .map(|(code, name, native)| Language { code: code.to_string(), name: name.to_string(), native_name: native.to_string() })
+        .map(|(code, name, native)| Language {
+            code: code.to_string(),
+            name: name.to_string(),
+            native_name: native.to_string(),
+        })
         .collect()
 }
 
@@ -80,8 +84,7 @@ pub fn validate_code(code: &str) -> Result<String, AppError> {
     if ok { Ok(code.to_string()) } else { Err(AppError::invalid(format!("'{code}' is not a valid language code"))) }
 }
 
-pub const NO_TARGET_MESSAGE: &str =
-    "No target language selected. Choose the language to translate into in Settings → Translation (or in this game's translation settings).";
+pub const NO_TARGET_MESSAGE: &str = "No target language selected. Choose the language to translate into in Settings → Translation (or in this game's translation settings).";
 
 /// Resolved languages for one translation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,8 +132,9 @@ mod tests {
 
     #[test]
     fn no_target_is_invalid_input() {
-        let err = resolve_languages(None, None, Some(&TranslationConfig::default()), Some(&TranslationDefaults::default()))
-            .unwrap_err();
+        let err =
+            resolve_languages(None, None, Some(&TranslationConfig::default()), Some(&TranslationDefaults::default()))
+                .unwrap_err();
         assert_eq!(err.code, vnl_core::ErrorCode::InvalidInput);
         assert!(err.message.contains("target language"));
         // Empty strings count as unset.
@@ -139,7 +143,8 @@ mod tests {
 
     #[test]
     fn precedence_request_game_defaults() {
-        let defaults = TranslationDefaults { source_language: "ja".into(), target_language: Some("de".into()), provider_id: None };
+        let defaults =
+            TranslationDefaults { source_language: "ja".into(), target_language: Some("de".into()), provider_id: None };
         let game = TranslationConfig { target_language: Some("fr".into()), ..Default::default() };
         let r = resolve_languages(None, None, Some(&game), Some(&defaults)).unwrap();
         assert_eq!(r, ResolvedLanguages { source: Some("ja".into()), target: "fr".into() });

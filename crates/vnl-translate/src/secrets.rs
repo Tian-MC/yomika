@@ -111,8 +111,9 @@ impl FileSecretStore {
 
     fn read_all(&self) -> Result<BTreeMap<String, String>, AppError> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|e| AppError::new(ErrorCode::Io, format!("corrupt secrets file {}: {e}", self.path.display()))),
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
+                AppError::new(ErrorCode::Io, format!("corrupt secrets file {}: {e}", self.path.display()))
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
             Err(e) => Err(e.into()),
         }

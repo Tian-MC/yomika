@@ -1,13 +1,15 @@
 //! Screen capture (`ScreenCapture`) for OCR.
 //!
 //! What works on Linux, verified on GNOME 51 / Wayland with XWayland:
-//! - **X11 (`x11`)**: `ffmpeg -f x11grab` on `$DISPLAY` (or gamescope's
-//!   nested display). GNOME's XWayland is *rootless*: the root window only
-//!   contains X11 clients, i.e. Wine/Proton games (which use X11 unless the
-//!   experimental winewayland driver is enabled) — exactly what we want.
-//!   Wayland-native windows appear black. ImageMagick `import -window root`
-//!   is used as a fallback when ffmpeg is missing (on the test machine it
-//!   failed against rootless XWayland: "missing an image filename").
+//! - **X11 (`x11`)**: `ffmpeg -f x11grab` (fallback ImageMagick `import`).
+//!   GNOME's XWayland is *rootless* and windows are redirected, so capturing
+//!   the root window returns black even where X11 windows are — verified on
+//!   the dev machine. What works is capturing a specific X11 window
+//!   (`-window_id <id>` / `import -window <id>`): verified with a GTK X11
+//!   window, then OCRed correctly by a local Ollama vision model. Wine sets
+//!   `WM_CLASS` to the exe name (e.g. `game.exe`), so the game window is found
+//!   via `xprop` on `_NET_CLIENT_LIST`. Root capture still works on real X11
+//!   sessions; gamescope's nested Xwayland (e.g. `:2`) is untested.
 //! - **xdg-desktop-portal (`portal`)**: `org.freedesktop.portal.Screenshot`.
 //!   Captures Wayland too, but on GNOME it asks the user for permission
 //!   (interactive dialog the first time / every time when `interactive`).
@@ -47,8 +49,17 @@ pub fn validate_region(r: &CaptureRegion) -> Result<(), AppError> {
 }
 
 /// `ffmpeg` x11grab invocation writing one PNG to stdout.
-pub fn ffmpeg_x11_command(ffmpeg: &Path, display: &str, region: Option<CaptureRegion>) -> CommandSpec {
+/// `window`: X11 window id (`0x3000003`); region offsets are then relative to it.
+pub fn ffmpeg_x11_command(
+    ffmpeg: &Path,
+    display: &str,
+    window: Option<&str>,
+    region: Option<CaptureRegion>,
+) -> CommandSpec {
     let mut spec = CommandSpec::new(ffmpeg).args(["-hide_banner", "-loglevel", "error", "-nostdin", "-f", "x11grab"]);
+    if let Some(w) = window {
+        spec = spec.args(["-window_id", w]);
+    }
     let input = match region {
         Some(r) => {
             spec = spec.args(["-video_size".to_string(), format!("{}x{}", r.width, r.height)]);
@@ -56,16 +67,23 @@ pub fn ffmpeg_x11_command(ffmpeg: &Path, display: &str, region: Option<CaptureRe
         }
         None => display.to_string(),
     };
-    spec.args(["-draw_mouse", "0", "-i"])
-        .arg(input)
-        .args(["-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"])
+    spec.args(["-draw_mouse", "0", "-i"]).arg(input).args(["-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"])
 }
 
 /// ImageMagick `import` invocation writing one PNG to stdout.
-pub fn import_x11_command(import: &Path, display: &str, region: Option<CaptureRegion>) -> CommandSpec {
-    let mut spec = CommandSpec::new(import).args(["-display", display, "-window", "root", "-silent"]);
+pub fn import_x11_command(
+    import: &Path,
+    display: &str,
+    window: Option<&str>,
+    region: Option<CaptureRegion>,
+) -> CommandSpec {
+    let mut spec = CommandSpec::new(import).args(["-display", display, "-window", window.unwrap_or("root"), "-silent"]);
     if let Some(r) = region {
-        spec = spec.args(["-crop".to_string(), format!("{}x{}+{}+{}", r.width, r.height, r.x, r.y), "+repage".to_string()]);
+        spec = spec.args([
+            "-crop".to_string(),
+            format!("{}x{}+{}+{}", r.width, r.height, r.x, r.y),
+            "+repage".to_string(),
+        ]);
     }
     spec.arg("png:-")
 }
@@ -106,10 +124,98 @@ pub enum X11Tool {
     Import,
 }
 
+/// Which X11 drawable to capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum X11Target {
+    Root,
+    /// Explicit window id (`0x3000003`).
+    WindowId(String),
+    /// First client window whose WM_CLASS (or title) matches, e.g. `game.exe`.
+    WindowClass(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct X11Window {
+    pub id: String,
+    pub class: Vec<String>,
+    pub name: Option<String>,
+    pub pid: Option<u32>,
+}
+
+/// `_NET_CLIENT_LIST(WINDOW): window id # 0x3000003, 0x400003` → ids.
+pub fn parse_client_list(out: &str) -> Vec<String> {
+    out.split_once('#')
+        .map(|(_, ids)| ids.split(',').map(|i| i.trim().to_string()).filter(|i| i.starts_with("0x")).collect())
+        .unwrap_or_default()
+}
+
+fn quoted_values(v: &str) -> Vec<String> {
+    v.split('"').skip(1).step_by(2).map(str::to_string).collect()
+}
+
+/// Parses `xprop -id <id> WM_CLASS _NET_WM_PID WM_NAME _NET_WM_NAME` output.
+pub fn parse_window_props(id: &str, out: &str) -> X11Window {
+    let mut w = X11Window { id: id.to_string(), class: Vec::new(), name: None, pid: None };
+    for line in out.lines() {
+        let Some((key, val)) = line.split_once('=') else { continue };
+        let key = key.split('(').next().unwrap_or("").trim();
+        match key {
+            "WM_CLASS" => w.class = quoted_values(val),
+            "_NET_WM_PID" => w.pid = val.trim().parse().ok(),
+            "_NET_WM_NAME" => w.name = quoted_values(val).into_iter().next().or(w.name.take()),
+            "WM_NAME" if w.name.is_none() => w.name = quoted_values(val).into_iter().next(),
+            _ => {}
+        }
+    }
+    w
+}
+
+/// Wine sets WM_CLASS to `("game.exe", "Wine")`; also match the exe stem in the title.
+pub fn match_window<'a>(windows: &'a [X11Window], exe_name: &str) -> Option<&'a X11Window> {
+    let want = exe_name.to_lowercase();
+    let stem = want.trim_end_matches(".exe");
+    windows
+        .iter()
+        .find(|w| w.class.iter().any(|c| c.to_lowercase() == want))
+        .or_else(|| windows.iter().find(|w| w.class.iter().any(|c| c.to_lowercase() == stem)))
+        .or_else(|| {
+            windows
+                .iter()
+                .find(|w| w.name.as_deref().is_some_and(|n| !stem.is_empty() && n.to_lowercase().contains(stem)))
+        })
+}
+
+async fn xprop(display: &str, args: &[&str]) -> Result<String, AppError> {
+    let xprop = which::which("xprop").map_err(|_| {
+        AppError::new(ErrorCode::MissingDependency, "xprop is needed to find the game window")
+            .with_details("Install with: pacman -S xorg-xprop (apt install x11-utils)")
+    })?;
+    let out = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::process::Command::new(xprop).arg("-display").arg(display).args(args).kill_on_drop(true).output(),
+    )
+    .await
+    .map_err(|_| AppError::new(ErrorCode::Process, "xprop timed out"))??;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Lists managed client windows on an X display (`_NET_CLIENT_LIST`).
+pub async fn list_x11_windows(display: &str) -> Result<Vec<X11Window>, AppError> {
+    let ids = parse_client_list(&xprop(display, &["-root", "_NET_CLIENT_LIST"]).await?);
+    let mut out = Vec::new();
+    for id in ids {
+        let props = xprop(display, &["-id", &id, "WM_CLASS", "_NET_WM_PID", "WM_NAME", "_NET_WM_NAME"]).await?;
+        out.push(parse_window_props(&id, &props));
+    }
+    Ok(out)
+}
+
 pub struct X11Capture {
     pub display: String,
     pub tool: X11Tool,
     pub program: PathBuf,
+    pub target: X11Target,
+    resolved: std::sync::Mutex<Option<String>>,
 }
 
 impl X11Capture {
@@ -120,25 +226,52 @@ impl X11Capture {
             .or_else(|| std::env::var("DISPLAY").ok())
             .filter(|d| !d.is_empty())
             .ok_or_else(|| {
-                AppError::new(ErrorCode::Unsupported, "No X11 display: $DISPLAY is not set (XWayland not running?)")
-            })?;
-        if !display.starts_with(':') && !display.contains(':') {
+            AppError::new(ErrorCode::Unsupported, "No X11 display: $DISPLAY is not set (XWayland not running?)")
+        })?;
+        if !display.contains(':') {
             return Err(AppError::invalid(format!("'{display}' is not an X11 display name like ':1'")));
         }
-        if let Ok(p) = which::which("ffmpeg") {
-            return Ok(Self { display, tool: X11Tool::Ffmpeg, program: p });
-        }
-        if let Ok(p) = which::which("import") {
-            return Ok(Self { display, tool: X11Tool::Import, program: p });
-        }
-        Err(AppError::new(ErrorCode::MissingDependency, "X11 capture needs ffmpeg or ImageMagick")
-            .with_details("Install with: pacman -S ffmpeg  (or: apt install ffmpeg / dnf install ffmpeg)"))
+        let (tool, program) = if let Ok(p) = which::which("ffmpeg") {
+            (X11Tool::Ffmpeg, p)
+        } else if let Ok(p) = which::which("import") {
+            (X11Tool::Import, p)
+        } else {
+            return Err(AppError::new(ErrorCode::MissingDependency, "X11 capture needs ffmpeg or ImageMagick")
+                .with_details("Install with: pacman -S ffmpeg  (or: apt install ffmpeg / dnf install ffmpeg)"));
+        };
+        Ok(Self { display, tool, program, target: X11Target::Root, resolved: std::sync::Mutex::new(None) })
     }
 
-    pub fn command(&self, region: Option<CaptureRegion>) -> CommandSpec {
+    pub fn with_target(mut self, target: X11Target) -> Self {
+        self.target = target;
+        self
+    }
+
+    pub fn command(&self, window: Option<&str>, region: Option<CaptureRegion>) -> CommandSpec {
         match self.tool {
-            X11Tool::Ffmpeg => ffmpeg_x11_command(&self.program, &self.display, region),
-            X11Tool::Import => import_x11_command(&self.program, &self.display, region),
+            X11Tool::Ffmpeg => ffmpeg_x11_command(&self.program, &self.display, window, region),
+            X11Tool::Import => import_x11_command(&self.program, &self.display, window, region),
+        }
+    }
+
+    async fn window_id(&self) -> Result<Option<String>, AppError> {
+        match &self.target {
+            X11Target::Root => Ok(None),
+            X11Target::WindowId(id) => Ok(Some(id.clone())),
+            X11Target::WindowClass(class) => {
+                if let Some(id) = self.resolved.lock().unwrap().clone() {
+                    return Ok(Some(id));
+                }
+                let windows = list_x11_windows(&self.display).await?;
+                let w = match_window(&windows, class).ok_or_else(|| {
+                    AppError::not_found(format!(
+                        "Game window ({class}) not found on X display {} — is the game running under X11/XWayland?",
+                        self.display
+                    ))
+                })?;
+                *self.resolved.lock().unwrap() = Some(w.id.clone());
+                Ok(Some(w.id.clone()))
+            }
         }
     }
 }
@@ -153,11 +286,24 @@ impl ScreenCapture for X11Capture {
         if let Some(r) = &region {
             validate_region(r)?;
         }
-        let bytes = run_capture_command(&self.command(region), Duration::from_secs(10)).await?;
-        if !is_png(&bytes) {
-            return Err(AppError::new(ErrorCode::Process, "capture tool did not return a PNG image"));
+        let window = self.window_id().await?;
+        let result = run_capture_command(&self.command(window.as_deref(), region), Duration::from_secs(10)).await;
+        let bytes = match result {
+            Ok(b) => b,
+            Err(e) => {
+                // The window may have been re-created; resolve again next time.
+                self.resolved.lock().unwrap().take();
+                return Err(e);
+            }
+        };
+        if !is_png(&bytes) || png_size(&bytes) == Some((1, 1)) {
+            self.resolved.lock().unwrap().take();
+            return Err(AppError::new(
+                ErrorCode::Process,
+                "X11 capture returned no image (window gone or not capturable)",
+            ));
         }
-        Ok(CapturedImage { bytes, source: format!("x11 {}", self.display) })
+        Ok(CapturedImage { bytes, source: format!("x11 {} {}", self.display, window.as_deref().unwrap_or("root")) })
     }
 }
 
@@ -257,7 +403,10 @@ impl PortalCapture {
         let msg = tokio::time::timeout(self.timeout, responses.next())
             .await
             .map_err(|_| {
-                AppError::new(ErrorCode::Unsupported, "screenshot portal did not answer (permission dialog not confirmed?)")
+                AppError::new(
+                    ErrorCode::Unsupported,
+                    "screenshot portal did not answer (permission dialog not confirmed?)",
+                )
             })?
             .ok_or_else(|| AppError::internal("screenshot portal closed the request"))?;
         let (code, results): (u32, HashMap<String, OwnedValue>) =
@@ -312,15 +461,24 @@ pub fn capture_backends() -> Vec<BackendInfo> {
             diag.push(format!("Using {:?} on display {}", c.tool, c.display));
             if wayland.is_some() {
                 diag.push(
-                    "Wayland session: only X11/XWayland windows (Wine/Proton games) are visible to X11 capture; \
-                     for gamescope pass its nested display (e.g. :2)."
+                    "Wayland session (rootless XWayland): the game window is captured directly (found by its WM_CLASS, \
+                     which Wine sets to the exe name); full-screen/root capture is black here. Wayland-native windows \
+                     cannot be captured this way."
                         .into(),
                 );
+            }
+            if which::which("xprop").is_err() {
+                diag.push("xprop not found: cannot locate the game window (pacman -S xorg-xprop).".into());
             }
         }
         Err(e) => diag.push(e.message.clone()),
     }
-    out.push(BackendInfo { id: "capture:x11".into(), name: "X11 / XWayland capture".into(), available: x11.is_ok(), diagnostics: diag });
+    out.push(BackendInfo {
+        id: "capture:x11".into(),
+        name: "X11 / XWayland capture".into(),
+        available: x11.is_ok(),
+        diagnostics: diag,
+    });
     let portal_ok = std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() || display.is_some() || wayland.is_some();
     out.push(BackendInfo {
         id: "capture:portal".into(),
@@ -347,24 +505,53 @@ mod tests {
 
     #[test]
     fn ffmpeg_command_shape() {
-        let spec = ffmpeg_x11_command(Path::new("/usr/bin/ffmpeg"), ":1", Some(REGION));
+        let spec = ffmpeg_x11_command(Path::new("/usr/bin/ffmpeg"), ":1", None, Some(REGION));
         let args = spec.args.join(" ");
         assert!(args.contains("-f x11grab"));
         assert!(args.contains("-video_size 640x120"));
         assert!(args.contains("-i :1+10,20"));
         assert!(args.ends_with("-frames:v 1 -f image2pipe -vcodec png -"));
-        let full = ffmpeg_x11_command(Path::new("ffmpeg"), ":2", None);
+        let full = ffmpeg_x11_command(Path::new("ffmpeg"), ":2", None, None);
         assert!(full.args.iter().any(|a| a == ":2"));
         assert!(!full.args.iter().any(|a| a == "-video_size"));
+        let win = ffmpeg_x11_command(Path::new("ffmpeg"), ":1", Some("0x3000003"), Some(REGION)).args.join(" ");
+        assert!(win.contains("-f x11grab -window_id 0x3000003 -video_size 640x120"), "{win}");
     }
 
     #[test]
     fn import_command_shape() {
-        let spec = import_x11_command(Path::new("import"), ":1", Some(REGION));
+        let spec = import_x11_command(Path::new("import"), ":1", None, Some(REGION));
         assert_eq!(
             spec.args,
             vec!["-display", ":1", "-window", "root", "-silent", "-crop", "640x120+10+20", "+repage", "png:-"]
         );
+        let spec = import_x11_command(Path::new("import"), ":1", Some("0x42"), None);
+        assert_eq!(spec.args, vec!["-display", ":1", "-window", "0x42", "-silent", "png:-"]);
+    }
+
+    #[test]
+    fn xprop_parsing_and_window_matching() {
+        // Captured with xprop on the dev machine (GTK X11 window) + a Wine-style entry.
+        assert_eq!(
+            parse_client_list("_NET_CLIENT_LIST(WINDOW): window id # 0x3000003, 0x400003"),
+            vec!["0x3000003", "0x400003"]
+        );
+        assert!(parse_client_list("_NET_CLIENT_LIST:  not found.").is_empty());
+        let gtk = parse_window_props(
+            "0x3000003",
+            "WM_CLASS(STRING) = \"xwin.py\", \"Xwin.py\"\n_NET_WM_PID(CARDINAL) = 969296\nWM_NAME(STRING) = \"vnl-ocr-test\"\n",
+        );
+        assert_eq!(gtk.class, vec!["xwin.py", "Xwin.py"]);
+        assert_eq!(gtk.pid, Some(969296));
+        assert_eq!(gtk.name.as_deref(), Some("vnl-ocr-test"));
+        let wine = parse_window_props(
+            "0x5",
+            "WM_CLASS(STRING) = \"ゲーム.exe\", \"Wine\"\n_NET_WM_NAME(UTF8_STRING) = \"タイトル\"\n",
+        );
+        let windows = vec![gtk, wine];
+        assert_eq!(match_window(&windows, "ゲーム.EXE").unwrap().id, "0x5");
+        assert_eq!(match_window(&windows, "vnl-ocr-test.exe").unwrap().id, "0x3000003");
+        assert!(match_window(&windows, "other.exe").is_none());
     }
 
     #[test]
@@ -389,11 +576,26 @@ mod tests {
         assert!(file_uri_to_path("https://x/y.png").is_err());
     }
 
+    /// Real xdg-desktop-portal screenshot (non-interactive). GNOME may show a
+    /// permission dialog. Run with `-- --ignored real_portal --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn real_portal_screenshot() {
+        let cap = PortalCapture { interactive: false, timeout: Duration::from_secs(20) };
+        match cap.capture(None).await {
+            Ok(img) => eprintln!("portal ok: {} bytes, size {:?}", img.bytes.len(), png_size(&img.bytes)),
+            Err(e) => panic!("portal failed: {} {:?}", e.message, e.details),
+        }
+    }
+
     /// Real capture on the current X display (XWayland). Run with `-- --ignored`.
     #[tokio::test]
     #[ignore]
     async fn real_x11_capture() {
-        let cap = X11Capture::detect(None).expect("X11 capture tool");
+        let mut cap = X11Capture::detect(None).expect("X11 capture tool");
+        if let Ok(id) = std::env::var("VNL_X11_WINDOW") {
+            cap = cap.with_target(X11Target::WindowId(id));
+        }
         let img = cap.capture(Some(CaptureRegion { x: 0, y: 0, width: 320, height: 200 })).await.expect("capture");
         eprintln!("captured {} bytes via {:?}: {:?}", img.bytes.len(), cap.tool, png_size(&img.bytes));
         assert_eq!(png_size(&img.bytes), Some((320, 200)));

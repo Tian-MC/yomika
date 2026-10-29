@@ -17,6 +17,8 @@ use crate::types::TextSourceState;
 
 /// Consecutive failures after which the loop gives up.
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// How long a missing game window is tolerated before it counts as failure.
+pub const STARTUP_GRACE: Duration = Duration::from_secs(180);
 
 pub struct OcrTextSource {
     capture: Arc<dyn ScreenCapture>,
@@ -64,10 +66,17 @@ impl TextSource for OcrTextSource {
             self.status.set_state(TextSourceState::Active);
             return Ok(());
         }
-        // One synchronous capture to surface setup errors immediately.
-        if let Err(e) = self.capture.capture(self.region).await {
-            self.status.fail(format!("Screen capture failed: {}", e.message));
-            return Err(e);
+        // One synchronous capture to surface setup errors immediately. A
+        // missing window (NotFound) is expected while the game is starting.
+        match self.capture.capture(self.region).await {
+            Ok(_) => {}
+            Err(e) if e.code == vnl_core::ErrorCode::NotFound => {
+                self.status.push(format!("Waiting: {}", e.message));
+            }
+            Err(e) => {
+                self.status.fail(format!("Screen capture failed: {}", e.message));
+                return Err(e);
+            }
         }
         self.status.set_state(TextSourceState::Active);
         let (capture, ocr, region, interval, language, status) = (
@@ -81,6 +90,8 @@ impl TextSource for OcrTextSource {
         let handle = tokio::spawn(async move {
             let mut last_hash = None;
             let mut failures = 0u32;
+            let mut ever_captured = false;
+            let started = tokio::time::Instant::now();
             let mut ticker = tokio::time::interval(interval);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -90,6 +101,7 @@ impl TextSource for OcrTextSource {
                 }
                 let result = async {
                     let img = capture.capture(region).await?;
+                    ever_captured = true;
                     let h = hash_bytes(&img.bytes);
                     if last_hash == Some(h) {
                         return Ok(None);
@@ -109,6 +121,13 @@ impl TextSource for OcrTextSource {
                         }
                     }
                     Ok(None) => failures = 0,
+                    Err(e)
+                        if !ever_captured
+                            && e.code == vnl_core::ErrorCode::NotFound
+                            && started.elapsed() < STARTUP_GRACE =>
+                    {
+                        status.push(format!("Waiting: {}", e.message));
+                    }
                     Err(e) => {
                         failures += 1;
                         status.push(format!("OCR cycle failed: {}", e.message));

@@ -123,7 +123,9 @@ pub async fn backend_infos(base_url: &str) -> Vec<BackendInfo> {
             id: "ollama".into(),
             name: "Ollama vision model".into(),
             available: false,
-            diagnostics: vec![format!("Ollama URL {base_url} is not local; OCR images are never sent to remote servers.")],
+            diagnostics: vec![format!(
+                "Ollama URL {base_url} is not local; OCR images are never sent to remote servers."
+            )],
         }];
     }
     match list_models(base_url).await {
@@ -131,13 +133,17 @@ pub async fn backend_infos(base_url: &str) -> Vec<BackendInfo> {
             let vision = vision_models(&models);
             if vision.is_empty() {
                 let cloud_vision = models.iter().any(|m| m.is_remote() && m.capabilities.iter().any(|c| c == "vision"));
-                let mut d = vec![
-                    "No local vision-capable model installed (e.g. `ollama pull qwen2.5vl:7b`).".to_string(),
-                ];
+                let mut d =
+                    vec!["No local vision-capable model installed (e.g. `ollama pull qwen2.5vl:7b`).".to_string()];
                 if cloud_vision {
                     d.push("Cloud vision models are ignored for privacy.".into());
                 }
-                return vec![BackendInfo { id: "ollama".into(), name: "Ollama vision model".into(), available: false, diagnostics: d }];
+                return vec![BackendInfo {
+                    id: "ollama".into(),
+                    name: "Ollama vision model".into(),
+                    available: false,
+                    diagnostics: d,
+                }];
             }
             vision
                 .into_iter()

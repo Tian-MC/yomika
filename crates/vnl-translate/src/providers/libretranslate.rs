@@ -45,7 +45,11 @@ impl LibreTranslateProvider {
             return Err(AppError::invalid("LibreTranslate: set the server URL in the provider settings"));
         }
         validate_url(&url, "Server URL")?;
-        Ok(Self { url, api_key: api_key.filter(|k| !k.is_empty()), client: http_client(cfg_f64(cfg, "timeoutSecs", 30.0))? })
+        Ok(Self {
+            url,
+            api_key: api_key.filter(|k| !k.is_empty()),
+            client: http_client(cfg_f64(cfg, "timeoutSecs", 30.0))?,
+        })
     }
 
     pub fn request_body(&self, req: &ProviderRequest) -> Value {
@@ -120,7 +124,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/translate"))
-            .and(body_json(json!({"q": "こんにちは", "source": "ja", "target": "de", "format": "text", "api_key": "lt-key"})))
+            .and(body_json(
+                json!({"q": "こんにちは", "source": "ja", "target": "de", "format": "text", "api_key": "lt-key"}),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"translatedText": "Hallo"})))
             .expect(1)
             .mount(&server)
@@ -148,7 +154,8 @@ mod tests {
         let mut cfg = Map::new();
         cfg.insert("url".into(), json!(server.uri()));
         let p = LibreTranslateProvider::from_config(&cfg, None).unwrap();
-        let req = ProviderRequest { text: "x".into(), source_language: None, target_language: "en".into(), glossary: vec![] };
+        let req =
+            ProviderRequest { text: "x".into(), source_language: None, target_language: "en".into(), glossary: vec![] };
         assert_eq!(p.request_body(&req)["source"], "auto");
         assert!(p.request_body(&req).get("api_key").is_none());
         let err = p.translate(&req).await.unwrap_err();

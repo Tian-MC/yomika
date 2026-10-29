@@ -33,7 +33,11 @@ pub fn tesseract_lang(code: Option<&str>, vertical: bool) -> String {
             other => crate::languages::primary_subtag(other).to_string(),
         },
     };
-    if vertical && matches!(base.as_str(), "jpn" | "chi_sim" | "chi_tra" | "kor") { format!("{base}_vert") } else { base }
+    if vertical && matches!(base.as_str(), "jpn" | "chi_sim" | "chi_tra" | "kor") {
+        format!("{base}_vert")
+    } else {
+        base
+    }
 }
 
 pub fn parse_list_langs(output: &str) -> Vec<String> {
@@ -64,8 +68,9 @@ async fn list_langs(program: &PathBuf) -> Result<Vec<String>, AppError> {
 
 impl TesseractOcr {
     pub async fn detect() -> Result<Self, AppError> {
-        let program = which::which("tesseract")
-            .map_err(|_| AppError::new(ErrorCode::MissingDependency, "tesseract is not installed").with_details(INSTALL_HINT))?;
+        let program = which::which("tesseract").map_err(|_| {
+            AppError::new(ErrorCode::MissingDependency, "tesseract is not installed").with_details(INSTALL_HINT)
+        })?;
         let languages = list_langs(&program).await?;
         Ok(Self { program, languages, vertical: false })
     }
@@ -174,7 +179,19 @@ mod tests {
             return;
         }
         let out = std::process::Command::new(magick)
-            .args(["-size", "600x120", "xc:white", "-fill", "black", "-pointsize", "48", "-annotate", "+20+80", "HELLO OCR", "png:-"])
+            .args([
+                "-size",
+                "600x120",
+                "xc:white",
+                "-fill",
+                "black",
+                "-pointsize",
+                "48",
+                "-annotate",
+                "+20+80",
+                "HELLO OCR",
+                "png:-",
+            ])
             .output()
             .unwrap();
         let img = CapturedImage { bytes: out.stdout, source: "test".into() };

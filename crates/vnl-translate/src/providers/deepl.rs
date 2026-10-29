@@ -20,7 +20,8 @@ pub const PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
 
 pub fn fields() -> Vec<ProviderConfigField> {
     vec![
-        ProviderConfigField::new("plan", "Plan", FieldKind::Select, false, json!("auto")).with_options(&["auto", "free", "pro"]),
+        ProviderConfigField::new("plan", "Plan", FieldKind::Select, false, json!("auto"))
+            .with_options(&["auto", "free", "pro"]),
         ProviderConfigField::new("formality", "Formality", FieldKind::Select, false, json!("default")).with_options(&[
             "default",
             "prefer_more",
@@ -135,7 +136,9 @@ impl TranslationProvider for DeepLProvider {
                 .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string))
                 .unwrap_or_else(|| body.chars().take(200).collect());
             let msg = match status {
-                403 => "DeepL rejected the API key (HTTP 403). Check the key and the free/pro plan setting.".to_string(),
+                403 => {
+                    "DeepL rejected the API key (HTTP 403). Check the key and the free/pro plan setting.".to_string()
+                }
                 456 => "DeepL character quota exhausted (HTTP 456).".to_string(),
                 429 => "DeepL: too many requests (HTTP 429); try again shortly.".to_string(),
                 s => format!("DeepL: HTTP {s}"),
@@ -180,7 +183,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v2/translate"))
             .and(header("authorization", "DeepL-Auth-Key abc:fx"))
-            .and(body_json(json!({"text": ["おはよう"], "target_lang": "PT-BR", "source_lang": "JA", "preserve_formatting": true})))
+            .and(body_json(
+                json!({"text": ["おはよう"], "target_lang": "PT-BR", "source_lang": "JA", "preserve_formatting": true}),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "translations": [{"detected_source_language": "JA", "text": "Bom dia"}]
             })))
@@ -206,7 +211,8 @@ mod tests {
             .mount(&server)
             .await;
         let p = provider(&server.uri());
-        let req = ProviderRequest { text: "x".into(), source_language: None, target_language: "en".into(), glossary: vec![] };
+        let req =
+            ProviderRequest { text: "x".into(), source_language: None, target_language: "en".into(), glossary: vec![] };
         let err = p.translate(&req).await.unwrap_err();
         assert!(err.message.contains("quota"));
         assert_eq!(err.details.as_deref(), Some("Quota exceeded"));

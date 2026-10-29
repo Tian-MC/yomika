@@ -10,8 +10,8 @@ use serde_json::{Map, Value, json};
 use vnl_core::AppError;
 
 use super::{
-    GlossaryStrategy, ProviderRequest, TranslationProvider, cfg_f64, cfg_str, check_status, clean_llm_output, http_client,
-    is_local_url, join_url, llm_system_prompt, network_error, validate_url,
+    GlossaryStrategy, ProviderRequest, TranslationProvider, cfg_f64, cfg_str, check_status, clean_llm_output,
+    http_client, is_local_url, join_url, llm_system_prompt, network_error, validate_url,
 };
 use crate::types::{FieldKind, ProviderConfigField, ProviderKind};
 
@@ -19,7 +19,13 @@ pub const ID: &str = "openai-compatible";
 
 pub fn fields() -> Vec<ProviderConfigField> {
     vec![
-        ProviderConfigField::new("baseUrl", "Base URL (including /v1)", FieldKind::Url, true, json!("http://127.0.0.1:8080/v1")),
+        ProviderConfigField::new(
+            "baseUrl",
+            "Base URL (including /v1)",
+            FieldKind::Url,
+            true,
+            json!("http://127.0.0.1:8080/v1"),
+        ),
         ProviderConfigField::new("model", "Model", FieldKind::String, true, json!("")),
         ProviderConfigField::new("temperature", "Temperature", FieldKind::Number, false, json!(0.2)),
         ProviderConfigField::new("timeoutSecs", "Timeout (seconds)", FieldKind::Number, false, json!(120)),
@@ -165,7 +171,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(401).set_body_json(json!({"error": {"message": "Invalid API key", "type": "auth"}})))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(json!({"error": {"message": "Invalid API key", "type": "auth"}})),
+            )
             .mount(&server)
             .await;
         let err = provider(&server.uri(), None).translate(&req()).await.unwrap_err();

@@ -141,10 +141,10 @@ impl SessionManager {
         {
             let mut list = self.sessions.lock().unwrap();
             let finished = list.iter().filter(|s| s.is_finished()).count();
-            if finished >= MAX_FINISHED_KEPT {
-                if let Some(pos) = list.iter().position(|s| s.is_finished()) {
-                    list.remove(pos);
-                }
+            if finished >= MAX_FINISHED_KEPT
+                && let Some(pos) = list.iter().position(|s| s.is_finished())
+            {
+                list.remove(pos);
             }
             list.push(session.clone());
         }

@@ -83,10 +83,12 @@ pub async fn build_adapter(
                 .await
                 .map(|o| std::sync::Arc::new(o) as std::sync::Arc<dyn OcrAdapter>)
                 .map_err(|e| {
-                    AppError::new(vnl_core::ErrorCode::MissingDependency, "No OCR backend is available").with_details(format!(
-                        "Tesseract: not installed (pacman -S tesseract tesseract-data-jpn). Ollama vision: {}",
-                        e.message
-                    ))
+                    AppError::new(vnl_core::ErrorCode::MissingDependency, "No OCR backend is available").with_details(
+                        format!(
+                            "Tesseract: not installed (pacman -S tesseract tesseract-data-jpn). Ollama vision: {}",
+                            e.message
+                        ),
+                    )
                 })
         }
     }
@@ -95,6 +97,30 @@ pub async fn build_adapter(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// End-to-end on the real desktop: X11 capture of the XWayland root window
+    /// + OCR with a local Ollama vision model. Show some Japanese text in an
+    /// X11 window first. Run with `-- --ignored real_x11_ollama_ocr --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn real_x11_ollama_ocr() {
+        use crate::capture::{ScreenCapture, X11Capture, X11Target};
+        let mut cap = X11Capture::detect(None).expect("X11 capture");
+        if let Ok(class) = std::env::var("VNL_X11_CLASS") {
+            cap = cap.with_target(X11Target::WindowClass(class));
+        }
+        let region = std::env::var("VNL_OCR_REGION").ok().map(|r| {
+            let v: Vec<u32> = r.split(',').map(|x| x.parse().unwrap()).collect();
+            vnl_core::CaptureRegion { x: v[0] as i32, y: v[1] as i32, width: v[2], height: v[3] }
+        });
+        let img = cap.capture(region).await.expect("capture");
+        let ocr = ollama_vision::OllamaVisionOcr::resolve(crate::providers::ollama::DEFAULT_BASE_URL, None)
+            .await
+            .expect("local vision model");
+        let started = std::time::Instant::now();
+        let text = ocr.recognize(&img, Some("ja")).await.expect("ocr");
+        eprintln!("model={} bytes={} elapsed={:?} text={text:?}", ocr.model, img.bytes.len(), started.elapsed());
+    }
 
     #[test]
     fn cleans_cjk_spacing() {

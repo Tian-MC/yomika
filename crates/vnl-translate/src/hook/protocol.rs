@@ -313,6 +313,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_verified_yorikure_embed_bgi_thread() {
+        let sentence =
+            parse_header_line("[#0|0:150:7BE5B820:0:1:EmbedBGI:EXHSXN8:20@3B820:Yorikure.exe] テスト台詞").unwrap();
+        assert_eq!(
+            (sentence.handle, sentence.pid, sentence.addr, sentence.ctx, sentence.ctx2),
+            (0, 336, 0x7BE5B820, 0, 1)
+        );
+        assert_eq!(sentence.name, "EmbedBGI");
+        assert_eq!(sentence.hook_code, "EXHSXN8:20@3B820:Yorikure.exe");
+        assert!(!sentence.is_console());
+        assert!(!sentence.is_host_clipboard());
+    }
+
+    #[test]
     fn gsm_utf16_continuations_and_service_lines_remain_separate() {
         let mut decoder = StreamDecoder::default();
         let mut parser = HostParser::default();

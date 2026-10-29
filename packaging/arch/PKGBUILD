@@ -15,15 +15,16 @@ url='https://example.invalid/vn-launcher'
 # The project license is not decided yet (workspace uses LicenseRef-TBD). Update with the SPDX id.
 license=('LicenseRef-TBD')
 depends=(
+  # Matches the binary's DT_NEEDED entries (checked with readelf on a debug build).
   'cairo'
-  'gcc-libs'
+  'dbus'
   'gdk-pixbuf2'
   'glib2'
   'glibc'
   'gtk3'
   'hicolor-icon-theme'
+  'libgcc'
   'libsoup3'
-  'pango'
   'webkit2gtk-4.1'
 )
 makedepends=(

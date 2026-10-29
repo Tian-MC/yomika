@@ -61,8 +61,7 @@ impl PrefixCommandBuilder for SessionPrefixBuilder {
 
 #[tauri::command]
 pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Result<SessionInfo, AppError> {
-    if let Some(running) =
-        state.runtime.sessions().into_iter().find(|s| s.game_id == game_id && !s.state.is_finished())
+    if let Some(running) = state.runtime.sessions().into_iter().find(|s| s.game_id == game_id && !s.state.is_finished())
     {
         return Err(AppError::invalid("This game is already running").with_details(format!("session {}", running.id)));
     }
@@ -74,8 +73,7 @@ pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Resu
 
     let session = state.runtime.start_session(resolved.to_request()).await?;
 
-    let translation =
-        vnl_translate::resolve_config(&resolved.settings.translation, &resolved.app_settings.translation);
+    let translation = vnl_translate::resolve_config(&resolved.settings.translation, &resolved.app_settings.translation);
     if translation.enabled && translation.extraction != ExtractionMode::Disabled {
         let ctx = vnl_translate::SessionContext {
             session_id: session.id.clone(),

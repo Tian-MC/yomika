@@ -20,9 +20,8 @@ impl AppPaths {
         if let Some(home) = std::env::var_os("VNL_HOME").filter(|v| !v.is_empty()) {
             return Ok(Self::under(Path::new(&home)));
         }
-        let dirs = directories::ProjectDirs::from("", "", Self::APP_NAME).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "cannot determine home directory")
-        })?;
+        let dirs = directories::ProjectDirs::from("", "", Self::APP_NAME)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cannot determine home directory"))?;
         Ok(Self {
             data_dir: dirs.data_dir().to_path_buf(),
             config_dir: dirs.config_dir().to_path_buf(),

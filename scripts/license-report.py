@@ -9,7 +9,8 @@ is dev-only).
 
 Usage:
   scripts/license-report.py                # Markdown report on stdout
-  scripts/license-report.py --check        # exit 1 if a shipped dep is copyleft/unknown
+  scripts/license-report.py --check        # exit 1 if a shipped dep is strong-copyleft/unknown
+                                           # (weak copyleft such as MPL-2.0 only warns)
   scripts/license-report.py --json out.json
 
 Classification is a heuristic over SPDX expressions: an `OR` expression is as
@@ -190,7 +191,7 @@ def markdown(rust, npm) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--check", action="store_true", help="fail if a shipped dependency is not permissive")
+    ap.add_argument("--check", action="store_true", help="fail on shipped strong-copyleft/unknown licenses")
     ap.add_argument("--json", metavar="FILE", help="also write raw data as JSON")
     args = ap.parse_args()
 
@@ -210,11 +211,15 @@ def main() -> int:
     print(markdown(rust, npm))
 
     if args.check:
-        bad = defaultdict(list)
+        bad, weak = defaultdict(list), defaultdict(list)
         for eco, data in (("rust", rust), ("npm", npm)):
             for r in (data or {}).get("shipped", []):
-                if r["class"] != "permissive" and not r.get("optional"):
-                    bad[eco].append(f"{r['name']}@{r['version']} ({r['license']})")
+                if r.get("optional") or r["class"] == "permissive":
+                    continue
+                target = weak if r["class"] == "weak-copyleft" else bad
+                target[eco].append(f"{r['name']}@{r['version']} ({r['license']})")
+        for eco, items in weak.items():
+            print(f"note: {eco}: {len(items)} shipped weak-copyleft: {', '.join(items)}", file=sys.stderr)
         if bad:
             for eco, items in bad.items():
                 print(f"{eco}: {len(items)} shipped non-permissive/unknown: {', '.join(items)}", file=sys.stderr)

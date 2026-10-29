@@ -12,16 +12,17 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "LicenseRef-TBD"
+publish = false
 repository = "https://example.invalid/vn-launcher"
 
 [workspace.dependencies]
-vnl-core = { path = "crates/vnl-core" }
-vnl-runtime = { path = "crates/vnl-runtime" }
-vnl-library = { path = "crates/vnl-library" }
-vnl-translate = { path = "crates/vnl-translate" }
-vnl-graphics = { path = "crates/vnl-graphics" }
+vnl-core = { path = "crates/vnl-core", version = "0.1.0" }
+vnl-runtime = { path = "crates/vnl-runtime", version = "0.1.0" }
+vnl-library = { path = "crates/vnl-library", version = "0.1.0" }
+vnl-translate = { path = "crates/vnl-translate", version = "0.1.0" }
+vnl-graphics = { path = "crates/vnl-graphics", version = "0.1.0" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

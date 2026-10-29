@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 vnl-core.workspace = true
@@ -18,6 +19,7 @@ uuid.workspace = true
 async-trait.workspace = true
 rusqlite.workspace = true
 which.workspace = true
+nix.workspace = true
 base64 = "0.22"
 url = "2"
 futures-util = "0.3"

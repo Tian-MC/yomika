@@ -19,25 +19,24 @@ pub mod runtime;
 pub mod settings;
 
 pub use error::{AppError, ErrorCode};
-pub use events::{AppEvent, EventSink, LogEntry, LogLevel, NullSink, TaskProgress, TaskState, TextOrigin, TranslationLine};
+pub use events::{
+    AppEvent, EventSink, LogEntry, LogLevel, NullSink, TaskProgress, TaskState, TextOrigin, TranslationLine,
+};
 pub use game::{Game, GameId, GameMetadata, GameQuery, GameSort, PlayStatus};
 pub use paths::AppPaths;
 pub use process::{CommandSpec, PrefixCommandBuilder};
-pub use runtime::{AuxProcessInfo, PrefixArch, PrefixInfo, PrefixKind, Runner, RunnerKind, RunnerSource, SessionId, SessionInfo, SessionState};
+pub use runtime::{
+    AuxProcessInfo, PrefixArch, PrefixInfo, PrefixKind, Runner, RunnerKind, RunnerSource, SessionId, SessionInfo,
+    SessionState,
+};
 pub use settings::*;
 
 /// Current Unix time in seconds.
 pub fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// Current Unix time in milliseconds.
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }

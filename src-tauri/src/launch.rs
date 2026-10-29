@@ -235,10 +235,6 @@ mod tests {
     }
 
     fn which_gamescope() -> Option<std::path::PathBuf> {
-        std::env::var_os("PATH")?
-            .to_str()?
-            .split(':')
-            .map(|d| Path::new(d).join("gamescope"))
-            .find(|p| p.is_file())
+        std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join("gamescope")).find(|p| p.is_file())
     }
 }

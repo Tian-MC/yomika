@@ -7,11 +7,12 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 use vnl_core::{
-    AppError, AuxProgram, CommandSpec, EventSink, ExtractionMode, Game, GameId, LogEntry, LogLevel, PrefixCommandBuilder,
-    PrefixInfo, Runner, RuntimeConfig, SessionInfo,
+    AppError, CommandSpec, EventSink, ExtractionMode, GameId, LogEntry, LogLevel, PrefixCommandBuilder, PrefixInfo,
+    Runner, RuntimeConfig, SessionInfo,
 };
-use vnl_runtime::{LaunchRequest, RuntimeService};
+use vnl_runtime::RuntimeService;
 
+use crate::launch::{ResolvedLaunch, resolve_launch};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -35,70 +36,8 @@ pub struct AppInfo {
     pub db_path: PathBuf,
 }
 
-struct ResolvedLaunch {
-    game: Game,
-    settings: vnl_core::GameSettings,
-    app_settings: vnl_core::AppSettings,
-    runner: Runner,
-    prefix: PrefixInfo,
-    command: CommandSpec,
-    companions: Vec<CommandSpec>,
-    aux: Vec<(AuxProgram, CommandSpec)>,
-    warnings: Vec<String>,
-}
-
-fn resolve_launch(state: &AppState, game_id: GameId) -> Result<ResolvedLaunch, AppError> {
-    let game = state.library.get_game(game_id)?;
-    let settings = state.library.get_settings(game_id)?;
-    let app_settings = state.library.get_app_settings()?;
-
-    let runner = state.runtime.resolve_runner(settings.runtime.runner.as_ref(), app_settings.default_runner.as_ref())?;
-    let prefix = state.runtime.resolve_prefix(&game, &settings.runtime.prefix, &runner)?;
-    let base = state.runtime.build_game_command(&game, &settings.runtime, &runner, &prefix)?;
-    let plan = state.graphics.apply(&settings.graphics, base, &runner)?;
-
-    let mut aux = Vec::with_capacity(settings.runtime.auxiliary.len());
-    for program in &settings.runtime.auxiliary {
-        let spec = build_aux_command(&state.runtime, program, &settings.runtime, &runner, &prefix)?;
-        aux.push((program.clone(), spec));
-    }
-
-    Ok(ResolvedLaunch {
-        game,
-        settings,
-        app_settings,
-        runner,
-        prefix,
-        command: plan.command,
-        companions: plan.companions,
-        aux,
-        warnings: plan.warnings,
-    })
-}
-
-fn build_aux_command(
-    runtime: &RuntimeService,
-    program: &AuxProgram,
-    config: &RuntimeConfig,
-    runner: &Runner,
-    prefix: &PrefixInfo,
-) -> Result<CommandSpec, AppError> {
-    let mut spec = if program.windows {
-        runtime.build_prefix_command(
-            &program.exe_path,
-            &program.args,
-            program.working_dir.as_deref(),
-            config,
-            runner,
-            prefix,
-        )?
-    } else {
-        let mut spec = CommandSpec::new(&program.exe_path).args(program.args.clone());
-        spec.cwd = program.working_dir.clone().or_else(|| program.exe_path.parent().map(Path::to_path_buf));
-        spec
-    };
-    spec.env.extend(program.env.clone());
-    Ok(spec)
+fn resolve(state: &AppState, game_id: GameId) -> Result<ResolvedLaunch, AppError> {
+    resolve_launch(&state.library, &state.runtime, &state.graphics, game_id)
 }
 
 /// Lets the translation subsystem run Windows helpers (hook hosts) inside the
@@ -128,21 +67,12 @@ pub async fn session_launch(state: State<'_, AppState>, game_id: GameId) -> Resu
         return Err(AppError::invalid("This game is already running").with_details(format!("session {}", running.id)));
     }
 
-    let resolved = resolve_launch(&state, game_id)?;
+    let resolved = resolve(&state, game_id)?;
     for warning in &resolved.warnings {
         state.sink.log(LogEntry::new(LogLevel::Warn, "graphics", warning.clone()));
     }
 
-    let request = LaunchRequest {
-        game_id,
-        runner: resolved.runner.clone(),
-        prefix: resolved.prefix.clone(),
-        config: resolved.settings.runtime.clone(),
-        command: resolved.command,
-        companions: resolved.companions,
-        aux: resolved.aux,
-    };
-    let session = state.runtime.start_session(request).await?;
+    let session = state.runtime.start_session(resolved.to_request()).await?;
 
     let translation =
         vnl_translate::resolve_config(&resolved.settings.translation, &resolved.app_settings.translation);
@@ -197,7 +127,7 @@ pub async fn session_start_aux(
 
 #[tauri::command]
 pub async fn session_preview(state: State<'_, AppState>, game_id: GameId) -> Result<LaunchPreview, AppError> {
-    let resolved = resolve_launch(&state, game_id)?;
+    let resolved = resolve(&state, game_id)?;
     Ok(LaunchPreview {
         preview: resolved.command.preview(),
         runner: resolved.runner,

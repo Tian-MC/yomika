@@ -40,8 +40,7 @@ impl AppState {
             let translation = translation.clone();
             let sink_for_log = sink.clone();
             sink.set_session_end_handler(Box::new(move |info| {
-                let ended_at = info.ended_at.unwrap_or_else(vnl_core::now_secs);
-                if let Err(e) = library.record_play_session(info.game_id, info.started_at, ended_at) {
+                if let Err(e) = crate::launch::record_session_end(&library, info) {
                     sink_for_log.log(
                         LogEntry::new(LogLevel::Error, "library", format!("failed to record playtime: {e}"))
                             .session(info.id.clone()),

@@ -5,6 +5,7 @@
 //! - the lines inside their area's block in `generate_handler!` below.
 
 mod commands;
+mod launch;
 mod sink;
 mod state;
 

@@ -91,6 +91,7 @@ else
 fi
 
 # --- Repo hygiene: scripts, workflows, packaging metadata
+step "RPM version conversion" python3 -m unittest discover -s scripts -p 'test_*.py'
 shopt -s nullglob
 sh_files=(scripts/*.sh)
 if have shellcheck; then step "shellcheck" shellcheck "${sh_files[@]}"; else

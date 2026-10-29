@@ -161,3 +161,12 @@ Local equivalent: `make ci` (`scripts/check-all.sh`).
 The Build and release workflow also runs on pushes to `main`. Download the
 `yomika-linux-x86_64` artifact from its Actions run for AppImage, deb, rpm and
 `SHA256SUMS`; artifacts are kept for 14 days. Only tags publish GitHub releases.
+
+### RPM prerelease versions
+
+`scripts/bundle-linux.sh` builds the application once and bundles AppImage/deb
+with the full application version. For RPM only, `scripts/rpm_config.py` maps
+`0.1.1-alpha.2` to Version `0.1.1`, Release `0.alpha.2`. This avoids RPM's ban on
+hyphens in Version and sorts the prerelease before final Release `1`.
+The override is passed only to `tauri bundle`; it does not change the version
+compiled into the application. `make bundles` and `make bundle-rpm` use this path.

@@ -98,11 +98,11 @@ bundle-deb: ## Build a .deb
 	@ls -1 $(DIST_DIR)/deb/*.deb
 
 bundle-rpm: ## Build an .rpm
-	$(TAURI) build --bundles rpm
+	scripts/bundle-linux.sh rpm
 	@ls -1 $(DIST_DIR)/rpm/*.rpm
 
 bundles: ## Build AppImage + deb + rpm in one go
-	$(TAURI) build --bundles appimage,deb,rpm
+	scripts/bundle-linux.sh
 
 # Builds the *committed* HEAD of this checkout (makepkg clones it via git+file://).
 # Missing dependencies are reported, not installed; add MAKEPKG_FLAGS=-s to let makepkg use sudo pacman.

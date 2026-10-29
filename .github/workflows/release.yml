@@ -59,11 +59,11 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
-      - name: tauri build
+      - name: Build and bundle Linux packages
         env:
           # linuxdeploy/appimagetool are themselves AppImages; runners have no FUSE.
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npm run tauri -- build --ci --bundles appimage,deb,rpm
+        run: scripts/bundle-linux.sh
 
       - name: Collect artifacts and checksums
         run: |

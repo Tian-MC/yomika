@@ -9,3 +9,5 @@
 /packaging/**/*.AppImage
 /packaging/arch/pkg/
 /packaging/arch/src/
+
+__pycache__/

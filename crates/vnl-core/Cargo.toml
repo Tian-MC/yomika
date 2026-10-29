@@ -1,6 +1,6 @@
 [package]
 name = "vnl-core"
-description = "Shared domain types, paths, events and process specs for VN Launcher"
+description = "Shared domain types, paths, events and process specs for Yomika"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

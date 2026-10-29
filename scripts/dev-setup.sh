@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The `have X && ok ... || miss ...` idiom is safe here: ok()/opt() always return 0.
 # shellcheck disable=SC2015
-# Checks build and runtime dependencies for VN Launcher and PRINTS the commands
+# Checks build and runtime dependencies for Yomika and PRINTS the commands
 # needed to install whatever is missing. It never runs sudo or installs anything.
 #
 # Usage: scripts/dev-setup.sh [--build-only|--runtime-only] [--quiet]

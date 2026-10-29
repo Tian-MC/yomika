@@ -51,7 +51,7 @@ linuxdeploy copies `copyright` files where available. Check this before the firs
 
 ## External programs we integrate with
 
-VN Launcher **starts these as separate processes** (`CommandSpec` argv + env, no shell) and
+Yomika **starts these as separate processes** (`CommandSpec` argv + env, no shell) and
 talks to them through command-line arguments, environment variables, files, pipes or HTTP. It
 doesn't link, vendor or ship any of them.
 
@@ -78,7 +78,7 @@ doesn't link, vendor or ship any of them.
 - **Separate programs, arm's-length communication.** Running a GPL program with `exec`,
   passing arguments and reading its output/pipes is, by the FSF's own GPL FAQ ("aggregate"
   vs. "combined work"), communication between separate programs. The GPL of umu-launcher,
-  LunaHook, wl-clipboard or linux-rt-upscaler doesn't extend to VN Launcher, whatever license
+  LunaHook, wl-clipboard or linux-rt-upscaler doesn't extend to Yomika, whatever license
   we pick. This holds as long as we:
   - don't copy their source code (including hook-code tables, Python modules or C++ helpers
     from LunaTranslator/LunaHook) into this repository,

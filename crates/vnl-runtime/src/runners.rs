@@ -39,7 +39,7 @@ pub struct DiscoveryRoots {
     /// Steam installation roots; `steamapps/common/Proton*` and the libraries
     /// listed in `steamapps/libraryfolders.vdf` are scanned.
     pub steam_roots: Vec<PathBuf>,
-    /// Runners managed by VN Launcher (`AppPaths::runners_dir`).
+    /// Runners managed by Yomika (`AppPaths::runners_dir`).
     pub managed_dir: Option<PathBuf>,
     /// `runners.json` with user-added runners.
     pub custom_file: Option<PathBuf>,

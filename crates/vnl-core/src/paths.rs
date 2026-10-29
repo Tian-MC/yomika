@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-/// All on-disk locations used by VN Launcher.
+/// All on-disk locations used by Yomika.
 ///
 /// Resolution order:
 /// 1. `VNL_HOME` env var: everything lives under `$VNL_HOME/{data,config,cache}`
@@ -14,6 +14,7 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
+    // Keep the original storage namespace so existing libraries and prefixes remain available.
     pub const APP_NAME: &'static str = "vn-launcher";
 
     pub fn from_env() -> std::io::Result<Self> {

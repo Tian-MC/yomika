@@ -58,12 +58,12 @@ function Sidebar() {
   ];
   return (
     <nav className="sidebar" aria-label={t("nav.main")}>
-      <Link to="/" className="brand" aria-label="VN Launcher">
+      <Link to="/" className="brand" aria-label="Yomika">
         <span className="brand-mark" aria-hidden>
           <BookOpen size={18} />
         </span>
         <span className="brand-text">
-          VN Launcher
+          Yomika
           <small lang="ja">ノベルランチャー</small>
         </span>
       </Link>

@@ -62,7 +62,7 @@ for fish unless configured. Either run `source ~/.cargo/env` (bash/zsh),
 | `make setup` | `npm ci` and `cargo fetch --locked` |
 | `make dev` | `npm run tauri dev` (Vite with HMR plus the Rust app, rebuilt on change) |
 | `make dev-isolated` | Same, with `VNL_HOME=./.vnl-dev` (throwaway data, see below) |
-| `make build` | Release binary without installers: `target/release/vn-launcher` |
+| `make build` | Release binary without installers: `target/release/yomika` |
 | `make test` | `cargo test --workspace` and `vitest run` |
 | `make lint` | `cargo fmt --check`, `clippy -D warnings`, ESLint, `tsc --noEmit` |
 | `make fmt` | `cargo fmt --all` |
@@ -196,3 +196,11 @@ Note: a plain `cargo build --release` produces a binary that loads the Vite
 dev server (`devUrl`). Release binaries must be built through the Tauri CLI
 (`npm run tauri build`, `make build`), which enables `tauri/custom-protocol`
 and embeds `dist/`.
+
+### Naming and existing installations
+
+The application and executable are named Yomika (`yomika`). The internal `vnl-*`
+crate names, `VNL_*` environment variables, XDG `vn-launcher` storage directories
+and `vn-launcher` keyring service are retained for compatibility with existing data.
+The application ID is now `io.github.yomika.Yomika`; existing Flatpak installations
+use a separate sandbox under the former `io.github.vnlauncher.VNLauncher` ID.

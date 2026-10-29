@@ -27,7 +27,7 @@ impl AppState {
     pub fn init(app: AppHandle) -> Result<Self, AppError> {
         let paths = AppPaths::from_env()?;
         paths.ensure()?;
-        tracing::info!(data = %paths.data_dir.display(), "starting VN Launcher");
+        tracing::info!(data = %paths.data_dir.display(), "starting Yomika");
 
         let sink = Arc::new(TauriSink::new(app.clone()));
         let events: Arc<dyn EventSink> = sink.clone();

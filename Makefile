@@ -1,4 +1,4 @@
-# VN Launcher developer entry points. Run `make help` for the list.
+# Yomika developer entry points. Run `make help` for the list.
 #
 # rustup installs cargo into ~/.cargo/bin, which is often not on PATH for
 # non-login shells (or fish users). We prepend it so cargo, rustc and the Tauri
@@ -22,7 +22,7 @@ ifneq ($(strip $(VNL_HOME)),)
 export VNL_HOME
 endif
 
-APP_ID      := io.github.vnlauncher.VNLauncher
+APP_ID      := io.github.yomika.Yomika
 DIST_DIR    := $(CURDIR)/target/release/bundle
 MAKEPKG_DIR := $(CURDIR)/target/makepkg
 FLATPAK_DIR := $(CURDIR)/target/flatpak
@@ -49,7 +49,7 @@ dev: ## Run the app with hot reload (set VNL_HOME=... for isolated data)
 dev-isolated: ## Run the app with data under ./.vnl-dev
 	@$(MAKE) dev VNL_HOME=$(CURDIR)/.vnl-dev
 
-build: ## Release build of the binary without installers (target/release/vn-launcher)
+build: ## Release build of the binary without installers (target/release/yomika)
 	$(TAURI) build --no-bundle
 
 test: test-rust test-js ## Run all tests

@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use vnl_core::{AppError, ErrorCode};
 
+// Keep existing provider credentials accessible after the product rename.
 pub const KEYRING_SERVICE: &str = "vn-launcher";
 
 pub trait SecretStore: Send + Sync {
@@ -251,11 +252,11 @@ mod tests {
     }
 
     /// Touches the real desktop keyring (writes and deletes one dummy entry
-    /// under service `vn-launcher-test`). Run manually with `-- --ignored`.
+    /// under service `yomika-test`). Run manually with `-- --ignored`.
     #[test]
     #[ignore]
     fn real_secret_service_roundtrip() {
-        let store = KeyringSecretStore::connect("vn-launcher-test").expect("Secret Service reachable");
+        let store = KeyringSecretStore::connect("yomika-test").expect("Secret Service reachable");
         store.set("dummy-provider", "not-a-real-key").unwrap();
         assert_eq!(store.get("dummy-provider").unwrap().as_deref(), Some("not-a-real-key"));
         store.delete("dummy-provider").unwrap();

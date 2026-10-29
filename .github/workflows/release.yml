@@ -1,10 +1,15 @@
-name: Release
+name: Build and release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
-  # Manual runs only build and upload workflow artifacts; publishing happens for tags.
+  # Branch/manual runs upload installable packages; tags also create a draft release.
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -75,15 +80,16 @@ jobs:
           app=$(ls dist-release/*.AppImage)
           chmod +x "$app"
           "$app" --appimage-extract >/dev/null
-          test -x squashfs-root/usr/bin/vn-launcher
-          ldd squashfs-root/usr/bin/vn-launcher | tee ldd.txt
+          test -x squashfs-root/usr/bin/yomika
+          ldd squashfs-root/usr/bin/yomika | tee ldd.txt
           if grep -q 'not found' ldd.txt; then echo "::error::unresolved libraries"; exit 1; fi
 
       - uses: actions/upload-artifact@v7
         with:
-          name: vn-launcher-linux-x86_64
+          name: yomika-linux-x86_64
           path: dist-release/*
           if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish GitHub release
@@ -95,7 +101,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: vn-launcher-linux-x86_64
+          name: yomika-linux-x86_64
           path: dist-release
 
       - uses: softprops/action-gh-release@v3

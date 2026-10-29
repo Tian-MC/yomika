@@ -1,6 +1,6 @@
 # Flatpak: design, limitations and security
 
-Status: the manifest at `packaging/flatpak/io.github.vnlauncher.VNLauncher.yml` validates
+Status: the manifest at `packaging/flatpak/io.github.yomika.Yomika.yml` validates
 against the flatpak-builder JSON schema, and the offline-source generators run on our lock
 files. **It hasn't been built or run.** The development host has no `flatpak-builder`. Treat
 everything below as the design to verify, not as tested behaviour.
@@ -36,7 +36,7 @@ module (a 1-2 hour build, heavy for Flathub's builders), stay on GNOME 51 until 
 ```
  sandbox (bwrap, own PID namespace)            host
  ┌────────────────────────────────────┐        ┌─────────────────────────────────────┐
- │ vn-launcher (Tauri, WebKitGTK)     │        │ flatpak-session-helper (D-Bus)      │
+ │ yomika (Tauri, WebKitGTK)     │        │ flatpak-session-helper (D-Bus)      │
  │   └─ flatpak-spawn --host ... ─────┼─D-Bus─►│   └─ umu-run / wine / gamescope ... │
  │        (proxy process, our PID)    │        │        └─ game.exe, wineserver      │
  └────────────────────────────────────┘        └─────────────────────────────────────┘
@@ -77,7 +77,7 @@ plus whatever is passed with `--env=`. Consequences:
   - Helpers shipped inside the Flatpak (e.g. a text-hook host `.exe`/DLLs bundled in
     `/app/share/...`) must be **copied to a host-visible directory** (e.g. the app data dir)
     before a host process can load them.
-- `~/.var/app/io.github.vnlauncher.VNLauncher/` is bind-mounted at the same path, so data
+- `~/.var/app/io.github.yomika.Yomika/` is bind-mounted at the same path, so data
   under the app's XDG dirs (prefixes, logs, runners) has the **same path on both sides**.
   That's why prefixes created by the launcher work for host Wine.
 - `--directory=` (cwd) must be a host path that exists. A game folder under `$HOME` is fine.
@@ -86,7 +86,7 @@ plus whatever is passed with `--env=`. Consequences:
 
 The manifest grants `--filesystem=home` plus read-only Steam directories. Game libraries on
 other drives (`/mnt/games`, `/run/media/...`) need extra grants:
-`flatpak override --user --filesystem=/mnt/games io.github.vnlauncher.VNLauncher`.
+`flatpak override --user --filesystem=/mnt/games io.github.yomika.Yomika`.
 Since the app can already run arbitrary host commands, narrower filesystem permissions add
 little security. They only keep the *sandboxed* UI process honest.
 

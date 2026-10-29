@@ -1,4 +1,4 @@
-//! Shared contract for every VN Launcher subsystem.
+//! Shared contract for every Yomika subsystem.
 //!
 //! This crate is owned by the orchestrator. Subsystem crates (`vnl-runtime`,
 //! `vnl-library`, `vnl-graphics`, `vnl-translate`) depend on it and must not

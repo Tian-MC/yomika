@@ -236,7 +236,7 @@ mod tests {
     }
 
     /// Full pipeline with the system Wine and a fresh dedicated prefix (in a
-    /// tempdir). Slow on first run (prefix init): `cargo test -p vnl-app -- --ignored`.
+    /// tempdir). Slow on first run (prefix init): `cargo test -p yomika-app -- --ignored`.
     #[tokio::test]
     #[ignore = "needs system wine; initialises a temporary prefix"]
     async fn real_wine_game_through_full_pipeline() {

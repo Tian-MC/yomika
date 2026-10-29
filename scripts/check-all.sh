@@ -99,8 +99,8 @@ if have shellcheck; then step "shellcheck" shellcheck "${sh_files[@]}"; else
   skip "shellcheck (not installed)"
 fi
 if have actionlint; then step "actionlint" actionlint; else skip "actionlint (not installed)"; fi
-DESKTOP=packaging/linux/io.github.vnlauncher.VNLauncher.desktop
-METAINFO=packaging/linux/io.github.vnlauncher.VNLauncher.metainfo.xml
+DESKTOP=packaging/linux/io.github.yomika.Yomika.desktop
+METAINFO=packaging/linux/io.github.yomika.Yomika.metainfo.xml
 if have desktop-file-validate; then step "desktop-file-validate" desktop-file-validate "$DESKTOP"; else skip "desktop-file-validate"; fi
 if have appstreamcli; then
   step "appstreamcli validate" appstreamcli validate --no-net --explain "$METAINFO"

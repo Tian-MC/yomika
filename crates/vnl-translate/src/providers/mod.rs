@@ -171,7 +171,7 @@ pub fn http_client(timeout_secs: f64) -> Result<reqwest::Client, AppError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs_f64(timeout_secs.clamp(1.0, 600.0)))
         .connect_timeout(Duration::from_secs(10))
-        .user_agent(concat!("vn-launcher/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("yomika/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| AppError::internal(format!("cannot build HTTP client: {e}")))
 }

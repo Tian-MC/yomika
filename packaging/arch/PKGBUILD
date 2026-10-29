@@ -1,17 +1,17 @@
-# Maintainer: VN Launcher contributors <https://example.invalid/vn-launcher>
+# Maintainer: Yomika contributors <https://github.com/Tian-MC/yomika>
 #
 # VCS package built from git. For a local build of the committed HEAD of a
 # checkout run `make arch-pkg` from the repository root, which sets
 # VNL_REPO=file://<checkout>. After editing this file run `make arch-srcinfo`.
 
-pkgname=vn-launcher-git
-_pkgname=vn-launcher
-_appid=io.github.vnlauncher.VNLauncher
+pkgname=yomika-git
+_pkgname=yomika
+_appid=io.github.yomika.Yomika
 pkgver=0.1.0.r1.gf97cb60
 pkgrel=1
 pkgdesc='Linux-first visual novel launcher (Wine/Proton/umu, text hooking, translation)'
 arch=('x86_64' 'aarch64')
-url='https://example.invalid/vn-launcher'
+url='https://github.com/Tian-MC/yomika'
 # The project license is not decided yet (workspace uses LicenseRef-TBD). Update with the SPDX id.
 license=('LicenseRef-TBD')
 depends=(
@@ -51,7 +51,7 @@ provides=("${_pkgname}")
 conflicts=("${_pkgname}")
 # Rust handles its own LTO (profile.release lto = "thin"); makepkg's C LTO flags only slow down cc-rs builds.
 options=('!lto')
-source=("${_pkgname}::git+${VNL_REPO:-https://example.invalid/vn-launcher.git}")
+source=("${_pkgname}::git+${VNL_REPO:-https://github.com/Tian-MC/yomika.git}")
 sha256sums=('SKIP')
 
 pkgver() {
@@ -94,7 +94,7 @@ check() {
 
 package() {
   cd "${_pkgname}"
-  install -Dm755 target/release/vn-launcher "${pkgdir}/usr/bin/vn-launcher"
+  install -Dm755 target/release/yomika "${pkgdir}/usr/bin/yomika"
 
   install -Dm644 "packaging/linux/${_appid}.desktop" "${pkgdir}/usr/share/applications/${_appid}.desktop"
   install -Dm644 "packaging/linux/${_appid}.metainfo.xml" "${pkgdir}/usr/share/metainfo/${_appid}.metainfo.xml"

@@ -97,7 +97,7 @@ pub fn run() {
             commands::translation::overlay_hide,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running VN Launcher");
+        .expect("error while running Yomika");
 }
 
 /// WebKitGTK's DMABUF renderer shows a blank window on many NVIDIA setups

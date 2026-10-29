@@ -1,8 +1,8 @@
-pkgbase = vn-launcher-git
+pkgbase = yomika-git
 	pkgdesc = Linux-first visual novel launcher (Wine/Proton/umu, text hooking, translation)
 	pkgver = 0.1.0.r1.gf97cb60
 	pkgrel = 1
-	url = https://example.invalid/vn-launcher
+	url = https://github.com/Tian-MC/yomika
 	arch = x86_64
 	arch = aarch64
 	license = LicenseRef-TBD
@@ -32,10 +32,10 @@ pkgbase = vn-launcher-git
 	optdepends = xclip: clipboard text source on X11
 	optdepends = noto-fonts-cjk: Japanese/CJK fonts
 	optdepends = lib32-vulkan-icd-loader: 32-bit Vulkan for DXVK in 32-bit games (also install the lib32 driver: lib32-mesa, lib32-vulkan-radeon or lib32-nvidia-utils)
-	provides = vn-launcher
-	conflicts = vn-launcher
+	provides = yomika
+	conflicts = yomika
 	options = !lto
-	source = vn-launcher::git+https://example.invalid/vn-launcher.git
+	source = yomika::git+https://github.com/Tian-MC/yomika.git
 	sha256sums = SKIP
 
-pkgname = vn-launcher-git
+pkgname = yomika-git

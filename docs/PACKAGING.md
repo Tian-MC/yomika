@@ -2,40 +2,40 @@
 
 | Format | How | Status |
 |---|---|---|
-| Release binary (no installer) | `make build` → `target/release/vn-launcher` | Used by the Arch package |
+| Release binary (no installer) | `make build` → `target/release/yomika` | Used by the Arch package |
 | AppImage | `make bundle-appimage` (Tauri bundler) | Configured. Release workflow builds it on Ubuntu 22.04. Not yet tested on other distros |
 | deb | `make bundle-deb` | Configured, built in CI (`tauri-build` job) |
 | rpm | `make bundle-rpm` | Configured |
-| Arch Linux | `packaging/arch/PKGBUILD` (`vn-launcher-git`), `make arch-pkg` | `makepkg -o` (fetch + prepare + pkgver) verified. Full package build not run yet |
+| Arch Linux | `packaging/arch/PKGBUILD` (`yomika-git`), `make arch-pkg` | `makepkg -o` (fetch + prepare + pkgver) verified. Full package build not run yet |
 | Flatpak | `packaging/flatpak/`, `make flatpak` | Manifest only; see [FLATPAK.md](FLATPAK.md) |
 
 Tauri bundles are configured in `src-tauri/tauri.conf.json` (`bundle.targets = appimage, deb,
-rpm`, identifier `io.github.vnlauncher.VNLauncher`, binary `vn-launcher`). Output lands in
+rpm`, identifier `io.github.yomika.Yomika`, binary `yomika`). Output lands in
 `target/release/bundle/<format>/`.
 
 ## Common metadata
 
 `packaging/linux/` holds the files the PKGBUILD and Flatpak install:
 
-- `io.github.vnlauncher.VNLauncher.desktop`: validated with `desktop-file-validate`.
-- `io.github.vnlauncher.VNLauncher.metainfo.xml`: AppStream, validated with
+- `io.github.yomika.Yomika.desktop`: validated with `desktop-file-validate`.
+- `io.github.yomika.Yomika.metainfo.xml`: AppStream, validated with
   `appstreamcli validate --no-net --pedantic`. The only pedantic hint is the uppercase letters
-  in the (fixed) app ID. Replace the `example.invalid` URLs and the placeholder screenshot,
+  in the (fixed) app ID. Add real screenshots,
   and set `<project_license>` once the license is chosen.
 - Icons come from `src-tauri/icons` (32, 64, 128, 256 (`128x128@2x`), 512 (`icon.png`)) and are
-  installed as `hicolor/<size>/apps/io.github.vnlauncher.VNLauncher.png`.
+  installed as `hicolor/<size>/apps/io.github.yomika.Yomika.png`.
 
 The Tauri deb/rpm/AppImage bundles generate their **own** `.desktop` file named after
-`productName` (`VN Launcher.desktop`, `Icon=vn-launcher`) and don't install the metainfo file.
+`productName` (`Yomika.desktop`, `Icon=yomika`) and don't install the metainfo file.
 To make the bundles use the same reverse-DNS IDs as the distro packages, add to
 `tauri.conf.json` → `bundle.linux` (orchestrator-owned file):
 
 ```json
 "linux": {
-  "deb":  { "desktopTemplate": "../packaging/linux/io.github.vnlauncher.VNLauncher.desktop",
-            "files": { "/usr/share/metainfo/io.github.vnlauncher.VNLauncher.metainfo.xml": "../packaging/linux/io.github.vnlauncher.VNLauncher.metainfo.xml" } },
-  "rpm":  { "desktopTemplate": "../packaging/linux/io.github.vnlauncher.VNLauncher.desktop",
-            "files": { "/usr/share/metainfo/io.github.vnlauncher.VNLauncher.metainfo.xml": "../packaging/linux/io.github.vnlauncher.VNLauncher.metainfo.xml" } }
+  "deb":  { "desktopTemplate": "../packaging/linux/io.github.yomika.Yomika.desktop",
+            "files": { "/usr/share/metainfo/io.github.yomika.Yomika.metainfo.xml": "../packaging/linux/io.github.yomika.Yomika.metainfo.xml" } },
+  "rpm":  { "desktopTemplate": "../packaging/linux/io.github.yomika.Yomika.desktop",
+            "files": { "/usr/share/metainfo/io.github.yomika.Yomika.metainfo.xml": "../packaging/linux/io.github.yomika.Yomika.metainfo.xml" } }
 }
 ```
 
@@ -102,7 +102,7 @@ packages (PKGBUILD / deb / rpm) link the system WebKitGTK and avoid all of the a
 
 ## Arch Linux (PKGBUILD)
 
-`packaging/arch/PKGBUILD` builds `vn-launcher-git`:
+`packaging/arch/PKGBUILD` builds `yomika-git`:
 
 - `prepare()`: `npm ci` (cache in `$srcdir/npm-cache`) and `cargo fetch --locked`.
 - `build()`: `npm run tauri -- build --no-bundle --ci -- --frozen` (frontend build + release
@@ -124,12 +124,12 @@ package, pacman doesn't know about `cargo`. Use `MAKEPKG_FLAGS=-d` (skip depende
 
 After editing the PKGBUILD: `make arch-srcinfo` (CI's Arch job fails if `.SRCINFO` is stale).
 For the AUR, replace `url`/`source` with the real repository and push `PKGBUILD` + `.SRCINFO`
-to `ssh://aur@aur.archlinux.org/vn-launcher-git.git`. Run `namcap` on both the PKGBUILD and the
+to `ssh://aur@aur.archlinux.org/yomika-git.git`. Run `namcap` on both the PKGBUILD and the
 built package first (`namcap` wasn't available where this was written).
 
 ## Release workflow
 
-`.github/workflows/release.yml` runs on `v*` tags (and manually):
+`.github/workflows/release.yml` runs on pushes to `main`, `v*` tags and manual dispatch:
 
 1. Checks that the tag matches `tauri.conf.json` `version`.
 2. Installs the Tauri deps on **ubuntu-22.04**, builds `appimage,deb,rpm` with
@@ -157,3 +157,7 @@ Not covered yet: code signing/GPG signatures for artifacts, Tauri updater artifa
 | `cargo-deny` | licenses/bans/sources (blocking), advisories (non-blocking) |
 
 Local equivalent: `make ci` (`scripts/check-all.sh`).
+
+The Build and release workflow also runs on pushes to `main`. Download the
+`yomika-linux-x86_64` artifact from its Actions run for AppImage, deb, rpm and
+`SHA256SUMS`; artifacts are kept for 14 days. Only tags create draft releases.

@@ -1,4 +1,7 @@
-# VN Launcher
+# Yomika
+
+[![CI](https://github.com/Tian-MC/yomika/actions/workflows/ci.yml/badge.svg)](https://github.com/Tian-MC/yomika/actions/workflows/ci.yml)
+[![Build](https://github.com/Tian-MC/yomika/actions/workflows/release.yml/badge.svg)](https://github.com/Tian-MC/yomika/actions/workflows/release.yml)
 
 A Linux-first launcher for visual novels. It keeps a library of your VNs, runs Windows titles
 through Wine, Proton or umu-launcher with per-game prefixes and Japanese locale settings, and
@@ -46,6 +49,14 @@ against real games isn't finished.
 
 Privacy: no dialogue text leaves your machine unless you configure an online translation
 provider yourself.
+
+## Download builds
+
+GitHub Actions builds Linux x86_64 AppImage, `.deb` and `.rpm` packages on every
+push to `main`. Open the latest successful [Build and release run](https://github.com/Tian-MC/yomika/actions/workflows/release.yml)
+and download the `yomika-linux-x86_64` artifact (GitHub sign-in required).
+The archive includes SHA256 checksums. Artifacts are retained for 14 days.
+Tagged versions also create a draft [GitHub release](https://github.com/Tian-MC/yomika/releases).
 
 ## Quick start (from source)
 

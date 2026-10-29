@@ -45,7 +45,7 @@ private = { ignore = true }
 # Until the project license is chosen the workspace uses `LicenseRef-TBD`.
 # Replace these with the chosen SPDX id (and drop the exceptions) once decided.
 exceptions = [
-    { crate = "vnl-app", allow = ["LicenseRef-TBD"] },
+    { crate = "yomika-app", allow = ["LicenseRef-TBD"] },
     { crate = "vnl-core", allow = ["LicenseRef-TBD"] },
     { crate = "vnl-runtime", allow = ["LicenseRef-TBD"] },
     { crate = "vnl-library", allow = ["LicenseRef-TBD"] },

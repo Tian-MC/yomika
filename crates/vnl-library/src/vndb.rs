@@ -17,8 +17,7 @@ use crate::types::VndbSearchResult;
 pub const DEFAULT_BASE_URL: &str = "https://api.vndb.org/kana";
 /// Environment override for the API base URL (development / mirrors).
 pub const BASE_URL_ENV: &str = "VNL_VNDB_URL";
-pub const USER_AGENT: &str =
-    concat!("vn-launcher/", env!("CARGO_PKG_VERSION"), " (+https://example.invalid/vn-launcher)");
+pub const USER_AGENT: &str = concat!("yomika/", env!("CARGO_PKG_VERSION"), " (+https://github.com/Tian-MC/yomika)");
 
 const SEARCH_FIELDS: &str = "title,alttitle,released,developers{name},image{url,sexual},rating";
 const DETAIL_FIELDS: &str = "title,alttitle,titles{lang,title,latin,main},aliases,olang,released,description,\

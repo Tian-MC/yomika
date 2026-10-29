@@ -166,7 +166,7 @@ impl OverlayController for TauriOverlay {
         let window = match self.app.get_webview_window(OVERLAY_LABEL) {
             Some(w) => w,
             None => WebviewWindowBuilder::new(&self.app, OVERLAY_LABEL, WebviewUrl::App("index.html#/overlay".into()))
-                .title("VN Launcher – Translation overlay")
+                .title("Yomika – Translation overlay")
                 .inner_size(960.0, 220.0)
                 .min_inner_size(240.0, 80.0)
                 .transparent(true)

@@ -1,17 +1,17 @@
-# Flatpak manifest for VN Launcher. See packaging/flatpak/README.md (building, generated
+# Flatpak manifest for Yomika. See packaging/flatpak/README.md (building, generated
 # sources) and docs/FLATPAK.md (sandbox limitations, host execution, security notes).
 #
 # GNOME 51 (freedesktop-sdk 26.08) is the newest runtime that still ships WebKitGTK 4.1
 # (webkit2gtk-4.1); it was removed from gnome-build-meta master on 2026-09-28, so GNOME 52+
 # will need WebKitGTK 4.1 built as a module here (or Tauri moving to WebKitGTK 6 / GTK 4).
-id: io.github.vnlauncher.VNLauncher
+id: io.github.yomika.Yomika
 runtime: org.gnome.Platform
 runtime-version: "51"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
   - org.freedesktop.Sdk.Extension.node24
-command: vn-launcher
+command: yomika
 
 finish-args:
   # Display: Wayland with X11 fallback; GPU for WebKitGTK compositing.
@@ -36,15 +36,15 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
   env:
-    CARGO_HOME: /run/build/vn-launcher/cargo
+    CARGO_HOME: /run/build/yomika/cargo
     CARGO_NET_OFFLINE: "true"
     npm_config_offline: "true"
-    npm_config_cache: /run/build/vn-launcher/flatpak-node/npm-cache
+    npm_config_cache: /run/build/yomika/flatpak-node/npm-cache
     npm_config_nodedir: /usr/lib/sdk/node24
-    XDG_CACHE_HOME: /run/build/vn-launcher/flatpak-node/cache
+    XDG_CACHE_HOME: /run/build/yomika/flatpak-node/cache
 
 modules:
-  - name: vn-launcher
+  - name: yomika
     buildsystem: simple
     build-commands:
       # Frontend deps from the offline npm cache (node-sources.json).
@@ -52,7 +52,7 @@ modules:
       # `tauri build` runs `npm run build` (vite) and then `cargo build --release` with the
       # custom-protocol feature; extra args after `--` are passed to cargo.
       - npm run tauri -- build --no-bundle --ci -- --offline
-      - install -Dm755 target/release/vn-launcher /app/bin/vn-launcher
+      - install -Dm755 target/release/yomika /app/bin/yomika
       - install -Dm644 packaging/linux/${FLATPAK_ID}.desktop /app/share/applications/${FLATPAK_ID}.desktop
       - install -Dm644 packaging/linux/${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
       - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/${FLATPAK_ID}.png
@@ -63,7 +63,7 @@ modules:
     sources:
       # Local checkout for development builds. For Flathub replace with:
       #   - type: git
-      #     url: https://example.invalid/vn-launcher.git
+      #     url: https://github.com/Tian-MC/yomika.git
       #     tag: v0.1.0
       #     commit: <full sha>
       - type: dir

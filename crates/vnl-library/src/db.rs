@@ -126,7 +126,7 @@ pub fn migrate_to(conn: &Connection, target: i64) -> Result<(), AppError> {
     if current > SCHEMA_VERSION {
         return Err(AppError::new(
             ErrorCode::Database,
-            "The library database was created by a newer version of VN Launcher",
+            "The library database was created by a newer version of Yomika",
         )
         .with_details(format!("database schema v{current}, supported up to v{SCHEMA_VERSION}")));
     }

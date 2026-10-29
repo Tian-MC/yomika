@@ -1,15 +1,15 @@
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=VN Launcher
+Name=Yomika
 GenericName=Visual Novel Launcher
 Comment=Launch and manage visual novels with Wine/Proton, text hooking and translation
-Exec=vn-launcher %U
-TryExec=vn-launcher
-Icon=io.github.vnlauncher.VNLauncher
+Exec=yomika %U
+TryExec=yomika
+Icon=io.github.yomika.Yomika
 Terminal=false
 Categories=Game;
 Keywords=visual novel;vn;galgame;eroge;wine;proton;umu;gamescope;translation;ocr;
 StartupNotify=true
-StartupWMClass=vn-launcher
+StartupWMClass=yomika
 SingleMainWindow=true

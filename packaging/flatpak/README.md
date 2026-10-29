@@ -1,6 +1,6 @@
 # Flatpak packaging
 
-Manifest: `io.github.vnlauncher.VNLauncher.yml` (GNOME 51 runtime, rust-stable + node24 SDK
+Manifest: `io.github.yomika.Yomika.yml` (GNOME 51 runtime, rust-stable + node24 SDK
 extensions, fully offline build). Read [`docs/FLATPAK.md`](../../docs/FLATPAK.md) first: the
 app runs games on the host via `flatpak-spawn --host`, which is a sandbox escape.
 
@@ -39,7 +39,7 @@ Run from the repository root whenever `Cargo.lock` or `package-lock.json` change
 ```
 
 - `cargo-sources.json` vendors every crate into `cargo/vendor` and writes `cargo/config`
-  (source replacement). The manifest points `CARGO_HOME` at `/run/build/vn-launcher/cargo`.
+  (source replacement). The manifest points `CARGO_HOME` at `/run/build/yomika/cargo`.
 - `node-sources.json` fills an npm cache in `flatpak-node/npm-cache` (the manifest's
   `npm_config_cache`) and adds `setup_sdk_node_headers.sh` (node-gyp headers in
   `flatpak-node/cache`, matched by `XDG_CACHE_HOME`). It includes the prebuilt native
@@ -53,8 +53,8 @@ Run from the repository root whenever `Cargo.lock` or `package-lock.json` change
 ```sh
 make flatpak       # = flatpak-builder --user --install-deps-from=flathub --force-clean --install \
                    #     --repo=target/flatpak/repo --state-dir=target/flatpak/state \
-                   #     target/flatpak/build packaging/flatpak/io.github.vnlauncher.VNLauncher.yml
-flatpak run io.github.vnlauncher.VNLauncher
+                   #     target/flatpak/build packaging/flatpak/io.github.yomika.Yomika.yml
+flatpak run io.github.yomika.Yomika
 ```
 
 The manifest uses a `dir` source (`../..`, skipping `target/`, `node_modules/`, `dist/`), so
@@ -62,7 +62,7 @@ it builds your working tree. For Flathub, replace it with a `git` source pinned 
 **and** commit, and run the linter:
 
 ```sh
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.vnlauncher.VNLauncher.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.yomika.Yomika.yml
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo target/flatpak/repo
 ```
 
@@ -77,7 +77,7 @@ curl -fsSLO https://raw.githubusercontent.com/flatpak/flatpak-builder/main/data/
 /tmp/fpv/bin/python - <<'EOF'
 import json, yaml, jsonschema
 schema = json.load(open("flatpak-manifest.schema.json"))
-doc = yaml.safe_load(open("packaging/flatpak/io.github.vnlauncher.VNLauncher.yml"))
+doc = yaml.safe_load(open("packaging/flatpak/io.github.yomika.Yomika.yml"))
 errors = list(jsonschema.Draft7Validator(schema).iter_errors(doc))
 print(*[f"{list(e.path)}: {e.message}" for e in errors], sep="\n")
 print("errors:", len(errors))

@@ -296,7 +296,7 @@ export const en = {
   "prefix.external": "external",
   "prefix.notInitialized": "Not created yet",
   "prefix.title": "Wine prefixes",
-  "prefix.desc": "Prefixes are never reset or deleted by VN Launcher.",
+  "prefix.desc": "Prefixes are never reset or deleted by Yomika.",
   "prefix.create": "New prefix",
   "prefix.created": "Prefix “{name}” created",
   "prefix.createFailed": "Could not create the prefix",
@@ -630,7 +630,7 @@ export const en = {
   "saves.restoreTitle": "Restore this backup?",
   "saves.restoreText": "Your current saves will be overwritten with “{name}” from {date}.",
   "saves.safetyTitle": "A safety backup is made first",
-  "saves.safetyText": "Before restoring, VN Launcher backs up your current saves automatically, so you can undo this by restoring the safety backup. Newer files are never deleted.",
+  "saves.safetyText": "Before restoring, Yomika backs up your current saves automatically, so you can undo this by restoring the safety backup. Newer files are never deleted.",
   "saves.restoreConfirm": "Back up current saves and restore",
   "saves.restored": "Restored {n} files",
   "saves.safetyCreated": "Safety backup of your previous saves created ({date}).",
@@ -675,7 +675,7 @@ export const en = {
 
   // import
   "import.title": "Add a game",
-  "import.subtitle": "Pick an executable or a folder; VN Launcher finds the right .exe.",
+  "import.subtitle": "Pick an executable or a folder; Yomika finds the right .exe.",
   "import.steps": "Import steps",
   "import.step.source": "Source",
   "import.step.candidates": "Executable",
@@ -738,7 +738,7 @@ export const en = {
 
   // diagnostics
   "diag.title": "Diagnostics",
-  "diag.subtitle": "What VN Launcher found on this system, and what is missing.",
+  "diag.subtitle": "What Yomika found on this system, and what is missing.",
   "diag.dependencies": "Dependencies",
   "diag.depsSummary": "{found} of {total} found",
   "diag.missingOnly": "Missing only",

@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VN Launcher",
-  "mainBinaryName": "vn-launcher",
+  "productName": "Yomika",
+  "mainBinaryName": "yomika",
   "version": "0.1.0",
-  "identifier": "io.github.vnlauncher.VNLauncher",
+  "identifier": "io.github.yomika.Yomika",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "VN Launcher",
+        "title": "Yomika",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

@@ -22,7 +22,7 @@ pub enum RunnerSource {
     System,
     /// Steam `compatibilitytools.d` or Steam's own Proton installs.
     Steam,
-    /// Downloaded/managed by VN Launcher.
+    /// Downloaded/managed by Yomika.
     Managed,
     /// Added manually by the user.
     Custom,
@@ -58,7 +58,7 @@ pub enum PrefixKind {
     /// Named prefix that several games can share.
     Shared,
     /// Prefix that already existed and was registered by the user.
-    /// VN Launcher must never delete or reset it.
+    /// Yomika must never delete or reset it.
     External,
 }
 
@@ -74,7 +74,7 @@ pub struct PrefixInfo {
     /// Runner last used to initialise this prefix.
     pub runner_id: Option<String>,
     pub created_at: i64,
-    /// True when VN Launcher created the directory and may manage it.
+    /// True when Yomika created the directory and may manage it.
     pub managed: bool,
     /// Whether the prefix has been initialised (drive_c exists).
     pub initialized: bool,

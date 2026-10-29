@@ -312,8 +312,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn spawned_commands_do_not_inherit_appimage_python_paths() {
         let spec = CommandSpec::new("/usr/bin/env")
-            .env("PYTHONHOME", "/tmp/.mount_VNLauncher/usr")
-            .env("PYTHONPATH", "/tmp/.mount_VNLauncher/usr/share/pyshared");
+            .env("PYTHONHOME", "/tmp/.mount_Yomika/usr")
+            .env("PYTHONPATH", "/tmp/.mount_Yomika/usr/share/pyshared");
         let child = spawn_group(&spec, false).unwrap();
         let output = child.wait_with_output().await.unwrap();
         assert!(output.status.success());

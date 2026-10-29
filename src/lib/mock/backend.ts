@@ -952,7 +952,7 @@ const handlers: Handlers = {
 
 export function seedStartupLogs(): void {
   if (state.logs.length > 0) return;
-  log("info", "app", "VN Launcher demo backend started");
+  log("info", "app", "Yomika demo backend started");
   log("debug", "runtime", "Scanning ~/.steam/root/compatibilitytools.d");
   log("info", "runtime", `Found ${state.runners.length} runners`);
   log("warn", "graphics", "RT-Upscaler not found in PATH");

@@ -15,7 +15,7 @@ edition = "2024"
 rust-version = "1.90"
 license = "LicenseRef-TBD"
 publish = false
-repository = "https://example.invalid/vn-launcher"
+repository = "https://github.com/Tian-MC/yomika"
 
 [workspace.dependencies]
 vnl-core = { path = "crates/vnl-core", version = "0.1.0" }

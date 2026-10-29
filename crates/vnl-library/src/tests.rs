@@ -434,7 +434,7 @@ async fn vndb_search_and_apply_against_mock() {
     let body: serde_json::Value = serde_json::from_str(body).unwrap();
     assert_eq!(body["filters"], serde_json::json!(["search", "=", "Ever17"]));
     assert!(body["fields"].as_str().unwrap().contains("image{url,sexual}"));
-    assert!(ua.starts_with("vn-launcher/"), "user agent: {ua}");
+    assert!(ua.starts_with("yomika/"), "user agent: {ua}");
 
     // Unknown id -> NotFound, game unchanged.
     let err = lib.vndb_apply(g.id, "v999999").await.unwrap_err();

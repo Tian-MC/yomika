@@ -287,7 +287,7 @@ pub fn build_args(cfg: &GamescopeConfig, ctx: &GamescopeContext) -> Result<Games
     for a in &cfg.extra_args {
         if a == "--" {
             return Err(AppError::invalid(
-                "gamescope extra arguments must not contain '--' (VN Launcher adds it before the game command)",
+                "gamescope extra arguments must not contain '--' (Yomika adds it before the game command)",
             ));
         }
     }

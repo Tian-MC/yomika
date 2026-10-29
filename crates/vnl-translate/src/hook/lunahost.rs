@@ -116,7 +116,7 @@ pub fn pick_cli(clis: &[HostCli], game: PeArch) -> Option<&HostCli> {
 pub fn install_hint(tools_dir: &Path) -> String {
     format!(
         "Place LunaHostCLI32.exe/LunaHostCLI64.exe (with LunaHost*.dll and LunaHook*.dll) from a LunaHook 3.x release, \
-         or Textractor's x86/x64 TextractorCLI.exe (with texthook.dll), in {}. VN Launcher never downloads hook hosts. \
+         or Textractor's x86/x64 TextractorCLI.exe (with texthook.dll), in {}. Yomika never downloads hook hosts. \
          Alternatively use the 'clipboard' hook backend with any hooker that copies text to the clipboard.",
         lunahook_dir(tools_dir).display()
     )

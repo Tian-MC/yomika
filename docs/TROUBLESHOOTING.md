@@ -9,9 +9,9 @@ OCR data and so on, and prints the install commands.
 |---|---|
 | Native (AppImage, deb, rpm, Arch package, source) | `~/.local/share/vn-launcher/logs/` |
 | Dev with `VNL_HOME` | `$VNL_HOME/data/logs/` |
-| Flatpak | `~/.var/app/io.github.vnlauncher.VNLauncher/data/vn-launcher/logs/` |
+| Flatpak | `~/.var/app/io.github.yomika.Yomika/data/vn-launcher/logs/` |
 
-Application tracing goes to stderr. Run from a terminal with `VNL_LOG=debug vn-launcher`
+Application tracing goes to stderr. Run from a terminal with `VNL_LOG=debug yomika`
 (filter syntax like `VNL_LOG=info,vnl_runtime=trace`). Wine's own debug output is controlled
 per game with `WINEDEBUG` in the game's environment settings (e.g. `WINEDEBUG=+loaddll`, or
 `-all` to silence it). For Proton add `PROTON_LOG=1`; the log is written to
@@ -34,7 +34,7 @@ On Debian/Ubuntu: `sudo dpkg --add-architecture i386` first.
 
 **Mixing runners in one prefix.** A prefix created by Proton 9 and then opened with system
 Wine 11 (or the other way round) gets "updated" and may break. Keep one runner per prefix, or
-let the launcher create a separate prefix per runner. VN Launcher never deletes or resets a
+let the launcher create a separate prefix per runner. Yomika never deletes or resets a
 prefix automatically; to start over, rename the prefix directory yourself (under
 `~/.local/share/vn-launcher/prefixes/`) and the next launch creates a fresh one.
 
@@ -110,9 +110,9 @@ The UI is a WebKitGTK webview. If the window stays white/blank, flickers, or cra
 
 | Symptom | Try |
 |---|---|
-| Blank window on NVIDIA (proprietary driver), Wayland | Applied automatically when `/proc/driver/nvidia/version` exists; otherwise run `WEBKIT_DISABLE_DMABUF_RENDERER=1 vn-launcher` (set it to `0` to opt out) |
-| Blank/garbled window in VMs or with broken GL | `WEBKIT_DISABLE_COMPOSITING_MODE=1 vn-launcher` |
-| `Failed to create GBM buffer` / EGL errors | `WEBKIT_DISABLE_DMABUF_RENDERER=1`, or force X11: `GDK_BACKEND=x11 vn-launcher` |
+| Blank window on NVIDIA (proprietary driver), Wayland | Applied automatically when `/proc/driver/nvidia/version` exists; otherwise run `WEBKIT_DISABLE_DMABUF_RENDERER=1 yomika` (set it to `0` to opt out) |
+| Blank/garbled window in VMs or with broken GL | `WEBKIT_DISABLE_COMPOSITING_MODE=1 yomika` |
+| `Failed to create GBM buffer` / EGL errors | `WEBKIT_DISABLE_DMABUF_RENDERER=1`, or force X11: `GDK_BACKEND=x11 yomika` |
 | AppImage only: EGL/Mesa errors, crash at start | The AppImage bundles WebKitGTK from the build host; prefer the distro package / PKGBUILD, or try `WEBKIT_DISABLE_DMABUF_RENDERER=1` (see [PACKAGING.md](PACKAGING.md#appimage)) |
 | Text is blurry with fractional scaling | `GDK_SCALE`/`GDK_DPI_SCALE`, or run under XWayland with `GDK_BACKEND=x11` |
 

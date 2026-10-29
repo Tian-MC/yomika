@@ -56,7 +56,7 @@ GitHub Actions builds Linux x86_64 AppImage, `.deb` and `.rpm` packages on every
 push to `main`. Open the latest successful [Build and release run](https://github.com/Tian-MC/yomika/actions/workflows/release.yml)
 and download the `yomika-linux-x86_64` artifact (GitHub sign-in required).
 The archive includes SHA256 checksums. Artifacts are retained for 14 days.
-Tagged versions also create a draft [GitHub release](https://github.com/Tian-MC/yomika/releases).
+Tagged versions also publish a [GitHub release](https://github.com/Tian-MC/yomika/releases).
 
 ## Quick start (from source)
 

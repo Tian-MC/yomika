@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  # Branch/manual runs upload installable packages; tags also create a draft release.
+  # Branch/manual runs upload installable packages; tags also publish a GitHub release.
   workflow_dispatch:
 
 concurrency:
@@ -106,8 +106,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          # Review the notes and artifacts, then publish the draft by hand.
-          draft: true
+          draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true

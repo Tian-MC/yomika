@@ -136,8 +136,8 @@ built package first (`namcap` wasn't available where this was written).
    `APPIMAGE_EXTRACT_AND_RUN=1`.
 3. Writes `SHA256SUMS`, smoke-tests the AppImage (`--appimage-extract`, `ldd` has no
    missing libraries) and uploads everything as a workflow artifact.
-4. For tags: creates a **draft** GitHub release with generated notes and the files attached.
-   Review and publish it by hand. Tags containing `-` (e.g. `v0.2.0-rc.1`) are marked as
+4. For tags: publishes a GitHub release with generated notes and the files attached.
+   Tags containing `-` (e.g. `v0.2.0-rc.1`) are marked as
    prereleases.
 
 Not covered yet: code signing/GPG signatures for artifacts, Tauri updater artifacts
@@ -160,4 +160,4 @@ Local equivalent: `make ci` (`scripts/check-all.sh`).
 
 The Build and release workflow also runs on pushes to `main`. Download the
 `yomika-linux-x86_64` artifact from its Actions run for AppImage, deb, rpm and
-`SHA256SUMS`; artifacts are kept for 14 days. Only tags create draft releases.
+`SHA256SUMS`; artifacts are kept for 14 days. Only tags publish GitHub releases.

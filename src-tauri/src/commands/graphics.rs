@@ -49,7 +49,10 @@ pub async fn graphics_preview(
         ),
         None => None,
     };
-    blocking(&state.graphics, move |g| g.preview(&config, runner.as_ref())).await
+    let options = vnl_graphics::GraphicsOptions {
+        gamescope_path: state.library.get_app_settings().ok().and_then(|s| s.gamescope_path),
+    };
+    blocking(&state.graphics, move |g| g.preview_with(&config, runner.as_ref(), &options)).await
 }
 
 #[tauri::command]

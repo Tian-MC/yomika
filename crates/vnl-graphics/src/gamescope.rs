@@ -87,12 +87,44 @@ pub fn filter_value(f: GamescopeFilter) -> &'static str {
         GamescopeFilter::Nis => "nis",
         GamescopeFilter::Pixel => "pixel",
         GamescopeFilter::Sgsr => "sgsr",
+        GamescopeFilter::Anime4k => "anime4k",
     }
+}
+
+/// Notes shown when the Anime4K filter is selected.
+pub fn anime4k_warnings(cfg: &GamescopeConfig, nvidia_proprietary: bool) -> Vec<String> {
+    let mut w = vec![
+        "Anime4K (2x CNN UL) is the heaviest gamescope filter: it runs a neural network on the GPU every frame."
+            .to_string(),
+    ];
+    if nvidia_proprietary {
+        w.push(
+            "Known issue: with the NVIDIA proprietary driver the gamescope-anime4k fork rendered a black image in our tests (RTX 5060 Ti, driver 615.78, headless and nested). If you see a black screen, switch the filter to FSR or Linear."
+                .to_string(),
+        );
+    }
+    match (cfg.game_width, cfg.game_height, cfg.output_width, cfg.output_height) {
+        (Some(gw), Some(gh), Some(ow), Some(oh)) if ow <= gw && oh <= gh => w.push(
+            "Anime4K only has an effect when the output resolution is larger than the game resolution.".to_string(),
+        ),
+        (None, _, _, _) | (_, None, _, _) => w.push(
+            "Set the game resolution (the game's native size) so gamescope knows how much to upscale.".to_string(),
+        ),
+        _ => {}
+    }
+    w
 }
 
 /// Filters that only change anything when gamescope actually upscales.
 pub fn is_upscaling_filter(f: GamescopeFilter) -> bool {
-    matches!(f, GamescopeFilter::Fsr | GamescopeFilter::Nis | GamescopeFilter::Pixel | GamescopeFilter::Sgsr)
+    matches!(
+        f,
+        GamescopeFilter::Fsr
+            | GamescopeFilter::Nis
+            | GamescopeFilter::Pixel
+            | GamescopeFilter::Sgsr
+            | GamescopeFilter::Anime4k
+    )
 }
 
 fn pair(name: &str, w: Option<u32>, h: Option<u32>) -> Result<Option<(u32, u32)>, AppError> {

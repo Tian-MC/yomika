@@ -18,6 +18,8 @@ pub mod deps;
 pub mod display;
 pub mod fullscreen;
 pub mod gamescope;
+pub mod gamescope_bin;
+pub mod gamescope_build;
 pub mod prefix;
 pub mod probe;
 pub mod system;
@@ -30,10 +32,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use vnl_core::{AppError, AppPaths, CommandSpec, ErrorCode, GraphicsConfig, Runner, RunnerKind};
+use vnl_core::{AppError, AppPaths, CommandSpec, GraphicsConfig, Runner, RunnerKind};
 
 pub use deps::{DependencyCategory, DependencyStatus, InstallHint};
 pub use display::{DisplaySessionType, GraphicsCapabilities, MonitorInfo};
+pub use gamescope_bin::{GamescopeBinary, GamescopeSource};
 pub use prefix::PrefixComponent;
 pub use probe::{Probe, ToolInfo};
 pub use system::SystemReport;
@@ -62,6 +65,13 @@ pub struct GraphicsPreview {
     pub command_preview: String,
     /// Shell-quoted previews of companion processes (upscaler).
     pub companions: Vec<String>,
+}
+
+/// Application-level inputs to [`GraphicsService::apply_with`].
+#[derive(Debug, Clone, Default)]
+pub struct GraphicsOptions {
+    /// `AppSettings::gamescope_path`.
+    pub gamescope_path: Option<PathBuf>,
 }
 
 pub struct GraphicsService {
@@ -94,14 +104,34 @@ impl GraphicsService {
         command: CommandSpec,
         runner: &Runner,
     ) -> Result<GraphicsPlan, AppError> {
-        self.plan(config, command, Some(runner), false)
+        self.apply_with(config, command, runner, &GraphicsOptions::default())
+    }
+
+    /// Like [`apply`](Self::apply) with application-level options (custom gamescope path).
+    pub fn apply_with(
+        &self,
+        config: &GraphicsConfig,
+        command: CommandSpec,
+        runner: &Runner,
+        options: &GraphicsOptions,
+    ) -> Result<GraphicsPlan, AppError> {
+        self.plan(config, command, Some(runner), false, options)
     }
 
     /// Preview the wrapper/env for `config` without a game. Missing tools are
     /// reported as warnings instead of errors; invalid settings still error.
     pub fn preview(&self, config: &GraphicsConfig, runner: Option<&Runner>) -> Result<GraphicsPreview, AppError> {
+        self.preview_with(config, runner, &GraphicsOptions::default())
+    }
+
+    pub fn preview_with(
+        &self,
+        config: &GraphicsConfig,
+        runner: Option<&Runner>,
+        options: &GraphicsOptions,
+    ) -> Result<GraphicsPreview, AppError> {
         let base = placeholder_command(runner);
-        let plan = self.plan(config, base.clone(), runner, true)?;
+        let plan = self.plan(config, base.clone(), runner, true, options)?;
         let wrapper_args = if config.gamescope.enabled {
             let inner = base.args.len() + 1;
             let mut v = vec![plan.command.program.to_string_lossy().into_owned()];
@@ -132,6 +162,7 @@ impl GraphicsService {
         command: CommandSpec,
         runner: Option<&Runner>,
         lenient: bool,
+        options: &GraphicsOptions,
     ) -> Result<GraphicsPlan, AppError> {
         if !config.gamescope.enabled && !config.wine_fsr.enabled && !config.upscaler.enabled {
             return Ok(GraphicsPlan { command, ..Default::default() });
@@ -178,17 +209,28 @@ impl GraphicsService {
                 desktop: display::desktop(probe),
             };
             let built = gamescope::build_args(gs, &ctx)?;
-            let program = match display::find_gamescope(probe) {
-                Some(p) => p,
-                None if lenient => {
-                    warnings.push("gamescope is not installed: launching with these settings will fail.".into());
+            let binaries = gamescope_bin::discover(
+                probe,
+                &self.paths,
+                gs.binary_path.as_deref(),
+                options.gamescope_path.as_deref(),
+            );
+            let program = match gamescope_bin::select(&binaries, gs.filter) {
+                Ok((bin, w)) => {
+                    warnings.extend(w);
+                    bin.path.clone()
+                }
+                Err(e) if lenient => {
+                    warnings.push(format!("{}: launching with these settings will fail.", e.message));
                     PathBuf::from("gamescope")
                 }
-                None => {
-                    return Err(AppError::new(ErrorCode::MissingDependency, "gamescope is enabled but not installed")
-                        .with_details(INSTALL_GAMESCOPE));
-                }
+                Err(e) if binaries.is_empty() => return Err(e.with_details(INSTALL_GAMESCOPE)),
+                Err(e) => return Err(e),
             };
+            if gs.filter == vnl_core::GamescopeFilter::Anime4k {
+                let nvidia = probe.sys_path("/proc/driver/nvidia/version").exists();
+                warnings.extend(gamescope::anime4k_warnings(gs, nvidia));
+            }
             if runner.is_some_and(|r| r.kind == RunnerKind::Proton) && command.env.contains_key("PROTON_ENABLE_WAYLAND")
             {
                 warnings.push("PROTON_ENABLE_WAYLAND is set: gamescope's nested session only provides XWayland by default (use --expose-wayland in extra args).".into());
@@ -239,6 +281,7 @@ pub fn placeholder_command(runner: Option<&Runner>) -> CommandSpec {
 mod tests {
     use super::*;
     use crate::test_support::script;
+    use vnl_core::ErrorCode;
     use vnl_core::{
         GamescopeConfig, GamescopeFilter, GamescopeScaler, RunnerSource, UpscalerConfig, WindowMode, WineFsrConfig,
     };
@@ -253,7 +296,11 @@ mod tests {
         let bin = dir.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         if with_gamescope {
-            script(&bin, "gamescope", "exit 0");
+            script(
+                &bin,
+                "gamescope",
+                "case \"$1\" in\n--version) echo 'gamescope version 3.17.0' >&2;;\n--help) echo 'gamescope usage'; echo '  -F, --filter  upscaler filter (linear, nearest, fsr, nis, pixel, sgsr)';;\nesac\nexit 0",
+            );
         }
         let root = dir.path().join("root");
         crate::test_support::drm_fixture(&root);
@@ -316,6 +363,77 @@ mod tests {
         assert!(plan.companions.is_empty() && plan.warnings.is_empty());
         let plan = f.svc.apply(&GraphicsConfig::default(), cmd.clone(), &r).unwrap();
         assert_eq!(plan.command, cmd);
+    }
+
+    /// Same fixture, but helper programs (`gamescope --help`) may run.
+    fn with_commands(f: &Fx) -> GraphicsService {
+        let mut probe = f.svc.probe().clone();
+        probe.run_commands = true;
+        GraphicsService::with_probe(&AppPaths::under(&f.dir.path().join("app")), probe)
+    }
+
+    /// A gamescope that lists `anime4k` (like the managed fork build).
+    fn fork_fx() -> Fx {
+        let f = fx(true);
+        script(
+            &f.dir.path().join("bin"),
+            "gamescope",
+            "case \"$1\" in\n--version) echo 'gamescope version 863ff3b' >&2;;\n--help) echo 'gamescope usage'; echo '  -F, --filter  upscaler filter (linear, nearest, fsr, nis, pixel, anime4k)';;\nesac\nexit 0",
+        );
+        f
+    }
+
+    #[test]
+    fn anime4k_uses_a_capable_binary_and_warns_on_nvidia() {
+        let f = fork_fx();
+        let svc = with_commands(&f);
+        let r = ge_runner(f.dir.path());
+        let cfg = GraphicsConfig {
+            gamescope: GamescopeConfig {
+                enabled: true,
+                game_width: Some(1280),
+                game_height: Some(720),
+                output_width: Some(1920),
+                output_height: Some(1080),
+                filter: GamescopeFilter::Anime4k,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plan = svc.apply(&cfg, game_cmd(&r), &r).unwrap();
+        let sep = plan.command.args.iter().position(|a| a == "--").unwrap();
+        assert!(plan.command.args[..sep].windows(2).any(|w| w == ["-F", "anime4k"]));
+        assert!(plan.warnings.iter().any(|w| w.contains("heaviest")));
+        assert!(!plan.warnings.iter().any(|w| w.contains("NVIDIA")), "no NVIDIA driver in the fixture");
+        // Same config on a machine with the NVIDIA proprietary driver.
+        let nv = f.dir.path().join("root/proc/driver/nvidia");
+        std::fs::create_dir_all(&nv).unwrap();
+        std::fs::write(nv.join("version"), "NVRM version: 615.78").unwrap();
+        let plan = svc.apply(&cfg, game_cmd(&r), &r).unwrap();
+        assert!(plan.warnings.iter().any(|w| w.contains("black image")));
+    }
+
+    #[test]
+    fn anime4k_without_a_capable_binary_is_a_clear_error_and_other_filters_still_work() {
+        let f = fx(true); // standard gamescope: no anime4k
+        let svc = with_commands(&f);
+        let r = ge_runner(f.dir.path());
+        let mk = |filter| GraphicsConfig {
+            gamescope: GamescopeConfig { enabled: true, filter, ..Default::default() },
+            ..Default::default()
+        };
+        let err = svc.apply(&mk(GamescopeFilter::Anime4k), game_cmd(&r), &r).unwrap_err();
+        assert_eq!(err.code, ErrorCode::MissingDependency);
+        assert!(err.details.unwrap().contains("Settings > Gamescope"));
+        for filter in [GamescopeFilter::Fsr, GamescopeFilter::Nis, GamescopeFilter::Linear] {
+            let plan = svc.apply(&mk(filter), game_cmd(&r), &r).unwrap();
+            assert!(plan.command.program.ends_with("gamescope"));
+        }
+        // A custom binary supporting anime4k is picked for that filter only.
+        let custom = crate::test_support::fake_gamescope(f.dir.path(), "fork-gs", "linear, fsr, anime4k");
+        let opts = GraphicsOptions { gamescope_path: Some(custom.clone()) };
+        let plan = svc.apply_with(&mk(GamescopeFilter::Anime4k), game_cmd(&r), &r, &opts).unwrap();
+        assert_eq!(plan.command.program, custom);
     }
 
     #[test]

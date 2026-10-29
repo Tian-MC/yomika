@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use vnl_core::{AppError, AppPaths, EventSink, LogEntry, LogLevel};
 use vnl_graphics::GraphicsService;
+use vnl_graphics::gamescope_build::GamescopeBuilder;
 use vnl_library::Library;
 use vnl_runtime::RuntimeService;
 use vnl_translate::TranslationService;
@@ -18,6 +19,7 @@ pub struct AppState {
     pub library: Arc<Library>,
     pub runtime: Arc<RuntimeService>,
     pub graphics: Arc<GraphicsService>,
+    pub gamescope_builder: Arc<GamescopeBuilder>,
     pub translation: Arc<TranslationService>,
 }
 
@@ -33,6 +35,7 @@ impl AppState {
         let library = Arc::new(Library::open(&paths)?);
         let runtime = Arc::new(RuntimeService::new(&paths, events.clone())?);
         let graphics = Arc::new(GraphicsService::new(&paths));
+        let gamescope_builder = Arc::new(GamescopeBuilder::new(&paths, events.clone()));
         let translation = Arc::new(TranslationService::new(&paths, events.clone())?);
 
         {
@@ -52,6 +55,6 @@ impl AppState {
             }));
         }
 
-        Ok(Self { app, paths, sink, library, runtime, graphics, translation })
+        Ok(Self { app, paths, sink, library, runtime, graphics, gamescope_builder, translation })
     }
 }

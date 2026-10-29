@@ -28,6 +28,7 @@ export function defaultGraphicsConfig(): GraphicsConfig {
       preferOutput: null,
       forceGrabCursor: false,
       autoFullscreen: true,
+      binaryPath: null,
       hdr: false,
       extraArgs: [],
     },
@@ -85,6 +86,7 @@ export function defaultAppSettings(): AppSettings {
     translation: { sourceLanguage: "ja", targetLanguage: null, providerId: null },
     defaultGraphics: defaultGraphicsConfig(),
     vndb: { enabled: true, blurSexualThreshold: 1 },
+    gamescopePath: null,
   };
 }
 

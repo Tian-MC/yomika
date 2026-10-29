@@ -1,3 +1,4 @@
+pub mod gamescope;
 pub mod graphics;
 pub mod library;
 pub mod runtime;

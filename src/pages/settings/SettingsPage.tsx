@@ -1,5 +1,6 @@
 import { Save, Undo2 } from "lucide-react";
 import { useState } from "react";
+import { GamescopeManager } from "../../components/GamescopeManager";
 import { GraphicsEditor, validateGraphics } from "../../components/GraphicsEditor";
 import { LanguageSelect, runnerLabel } from "../../components/pickers";
 import { Button } from "../../components/ui/Button";
@@ -145,6 +146,10 @@ function SettingsForm({ saved }: { saved: AppSettings }) {
             ...(blurValue === "custom" ? [{ value: "custom", label: `≥ ${draft.vndb.blurSexualThreshold}` }] : []),
           ]}
         />
+      </Section>
+
+      <Section id="gamescope" title={t("settings.gamescope")} description={t("settings.gamescopeDesc")}>
+        <GamescopeManager customPath={draft.gamescopePath} onCustomPathChange={(gamescopePath) => set({ gamescopePath })} />
       </Section>
 
       <Section title={t("settings.defaultGraphics")} description={t("settings.defaultGraphicsDesc")}>

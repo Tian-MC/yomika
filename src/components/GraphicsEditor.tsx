@@ -4,7 +4,8 @@ import { useT } from "../i18n";
 import { useCommand, useDebounced } from "../lib/hooks";
 import { Button } from "./ui/Button";
 import { Badge, Callout, ErrorState, Section, Spinner } from "./ui/feedback";
-import { ArgsField, NumberField, OptionalTextField, Segmented, SelectField, SwitchRow } from "./ui/form";
+import { Link } from "react-router-dom";
+import { ArgsField, NumberField, OptionalTextField, PathField, Segmented, SelectField, SwitchRow } from "./ui/form";
 
 export type Errors = Record<string, string>;
 
@@ -42,6 +43,8 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
   const monitors = caps.data?.monitors ?? [];
   const usesSharpness = gs.filter === "fsr" || gs.filter === "nis";
   const upAvailable = upscaler.data?.available ?? false;
+  const gsStatus = useCommand("gamescope_status", {});
+  const anime4kMissing = gs.filter === "anime4k" && !!gsStatus.data && !gsStatus.data.anime4kAvailable && !gs.binaryPath;
 
   return (
     <div className="stack gap-lg">
@@ -116,7 +119,7 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
               value={gs.filter}
               onChange={(v) => setGs({ filter: v as GamescopeFilter })}
               hint={t("gfx.filterHint")}
-              options={(["linear", "nearest", "fsr", "nis", "sgsr", "pixel"] as const).map((v) => ({ value: v, label: t(`gfx.filter.${v}`) }))}
+              options={(["linear", "nearest", "fsr", "nis", "sgsr", "pixel", "anime4k"] as const).map((v) => ({ value: v, label: t(`gfx.filter.${v}`) }))}
             />
             <NumberField label={t("gfx.sharpness")} value={gs.sharpness} onChange={(sharpness) => setGs({ sharpness })} min={0} max={20} step={1} disabled={!usesSharpness} hint={usesSharpness ? t("gfx.sharpnessHint") : t("gfx.sharpnessOnlyFsr")} error={err("gamescope.sharpness")} placeholder={t("gfx.default")} />
           </div>
@@ -138,6 +141,14 @@ export function GraphicsEditor({ value, onChange, errors = {}, runnerId, errorPr
             <SwitchRow label={t("gfx.autoFullscreen")} description={t("gfx.autoFullscreenHint")} checked={gs.autoFullscreen} onChange={(autoFullscreen) => setGs({ autoFullscreen })} />
             <SwitchRow label={t("gfx.hdr")} description={caps.data && caps.data.sessionType !== "wayland" ? t("gfx.hdrNeedsWayland") : t("gfx.hdrHint")} checked={gs.hdr} onChange={(hdr) => setGs({ hdr })} />
           </div>
+          {anime4kMissing && (
+            <Callout tone="warning" title={t("gfx.anime4kMissing")}>
+              {t("gfx.anime4kMissingHint")}{" "}
+              <Link to="/settings#gamescope">{t("gfx.anime4kGoSettings")}</Link>
+            </Callout>
+          )}
+          {gs.filter === "anime4k" && !anime4kMissing && <Callout tone="neutral">{t("gfx.anime4kNote")}</Callout>}
+          <PathField label={t("gfx.binaryPath")} clearable value={gs.binaryPath ?? ""} onChange={(v) => setGs({ binaryPath: v.trim() ? v : null })} hint={t("gfx.binaryPathHint")} placeholder={t("gfx.binaryPathAuto")} />
           <ArgsField label={t("gfx.extraArgs")} value={gs.extraArgs} onChange={(extraArgs) => setGs({ extraArgs })} hint={t("gfx.extraArgsHint")} placeholder="--adaptive-sync" />
         </fieldset>
         {caps.data && caps.data.notes.length > 0 && (

@@ -159,6 +159,8 @@ pub enum GamescopeFilter {
     Pixel,
     /// Snapdragon Game Super Resolution (gamescope >= 3.16).
     Sgsr,
+    /// Anime4K 2x CNN UL; only in the gamescope-anime4k fork (`-F anime4k`).
+    Anime4k,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +192,9 @@ pub struct GamescopeConfig {
     /// area in their X window, which shows up as black bars and a slight
     /// downscale; the game's fullscreen mode has no frame.
     pub auto_fullscreen: bool,
+    /// Use this gamescope binary for the game instead of the automatic choice
+    /// (application custom path, system, managed build).
+    pub binary_path: Option<PathBuf>,
     /// Appended verbatim (as separate argv entries) before `--`.
     pub extra_args: Vec<String>,
 }
@@ -212,6 +217,7 @@ impl Default for GamescopeConfig {
             force_grab_cursor: false,
             hdr: false,
             auto_fullscreen: true,
+            binary_path: None,
             extra_args: Vec::new(),
         }
     }
@@ -403,4 +409,6 @@ pub struct AppSettings {
     /// Applied to newly imported games.
     pub default_graphics: GraphicsConfig,
     pub vndb: VndbSettings,
+    /// Custom gamescope binary used for every game (per-game `binary_path` wins).
+    pub gamescope_path: Option<PathBuf>,
 }

@@ -21,6 +21,9 @@ import type {
   Runner,
   SaveBackup,
   SessionInfo,
+  GamescopeBinary,
+  GamescopeBuildStatus,
+  GamescopeStatus,
   TaskProgress,
   TranslationLine,
 } from "../../contract";
@@ -78,6 +81,7 @@ interface State {
   backups: SaveBackup[];
   nextGameId: number;
   nextId: number;
+  gamescope: { managed: boolean; build: GamescopeBuildStatus; cancelled: boolean };
 }
 
 function createState(): State {
@@ -102,6 +106,7 @@ function createState(): State {
     backups: seedBackups(now),
     nextGameId: 100,
     nextId: 1000,
+    gamescope: { managed: false, cancelled: false, build: { running: false, taskId: null, state: null, message: null, startedAt: null, finishedAt: null, logPath: null } },
   };
 }
 
@@ -132,6 +137,54 @@ function log(level: LogLevel, source: string, message: string, sessionId: string
   state.logs.push(entry);
   if (state.logs.length > 5000) state.logs.splice(0, state.logs.length - 5000);
   mockEmit("vnl://log", entry);
+}
+
+const MOCK_GAMESCOPE_SYSTEM: GamescopeBinary = {
+  path: "/usr/bin/gamescope",
+  version: "3.17.0",
+  source: "system",
+  filters: ["linear", "nearest", "fsr", "nis", "pixel", "sgsr"],
+  supportsAnime4k: false,
+};
+const MOCK_GAMESCOPE_MANAGED: GamescopeBinary = {
+  path: "~/.local/share/vn-launcher/tools/gamescope-anime4k/bin/gamescope",
+  version: "863ff3b",
+  source: "managed",
+  filters: ["linear", "nearest", "fsr", "nis", "pixel", "anime4k"],
+  supportsAnime4k: true,
+};
+
+function gamescopeStatus(): GamescopeStatus {
+  const g = state.gamescope;
+  const custom = state.app.gamescopePath;
+  const binaries: GamescopeBinary[] = [];
+  if (custom) binaries.push({ ...MOCK_GAMESCOPE_SYSTEM, path: custom, source: "custom", version: "custom" });
+  binaries.push(MOCK_GAMESCOPE_SYSTEM);
+  if (g.managed) binaries.push(MOCK_GAMESCOPE_MANAGED);
+  return {
+    binaries,
+    anime4kAvailable: binaries.some((b) => b.supportsAnime4k),
+    managed: {
+      installed: g.managed,
+      dir: "~/.local/share/vn-launcher/tools/gamescope-anime4k",
+      binary: g.managed ? MOCK_GAMESCOPE_MANAGED : null,
+      manifest: g.managed ? { repo: "https://github.com/Et3rnos/gamescope-anime4k.git", branch: "master", commit: "863ff3b892a30aefbdd16f31902472814c28134b", builtAt: nowS(), version: "863ff3b", filters: MOCK_GAMESCOPE_MANAGED.filters } : null,
+    },
+    requirements: {
+      items: [
+        { id: "git", name: "git", kind: "tool", found: true, detail: "/usr/bin/git" },
+        { id: "meson", name: "meson", kind: "tool", found: true, detail: "/usr/bin/meson" },
+        { id: "libdecor-0", name: "libdecor-0", kind: "library", found: true, detail: "0.2.3" },
+      ],
+      missing: [],
+      hints: [],
+      ok: true,
+    },
+    build: { ...g.build },
+    repoUrl: "https://github.com/Et3rnos/gamescope-anime4k.git",
+    branch: "master",
+    customPath: custom,
+  };
 }
 
 function getGame(id: number): Game {
@@ -664,6 +717,52 @@ const handlers: Handlers = {
   graphics_capabilities: () => seedCapabilities(),
   graphics_preview: ({ config }) => buildGraphicsPreview(config),
   graphics_upscaler_info: () => seedUpscaler(),
+  gamescope_status: () => gamescopeStatus(),
+  gamescope_inspect_path: ({ path }) => {
+    if (!path.startsWith("/")) fail("invalidInput", "Choose the gamescope executable with its full path");
+    if (!path.includes("gamescope")) fail("invalidInput", `${path} is not an executable gamescope`);
+    return { ...MOCK_GAMESCOPE_SYSTEM, path, source: "custom", supportsAnime4k: path.includes("anime4k"), filters: path.includes("anime4k") ? MOCK_GAMESCOPE_MANAGED.filters : MOCK_GAMESCOPE_SYSTEM.filters };
+  },
+  gamescope_build_start: () => {
+    const g = state.gamescope;
+    if (g.build.running) fail("invalidInput", "A gamescope build is already running");
+    const taskId = "gamescope-build";
+    const label = "Build gamescope (Anime4K)";
+    g.cancelled = false;
+    g.build = { running: true, taskId, state: "running", message: "Starting", startedAt: nowS(), finishedAt: null, logPath: "~/.local/share/vn-launcher/logs/gamescope-build.log" };
+    emitTask({ taskId, label, state: "running", progress: 0, message: "Starting" });
+    const steps: Array<[number, string]> = [[0.05, "Fetching the gamescope-anime4k sources"], [0.2, "Fetching submodules"], [0.32, "Configuring (meson setup)"], [0.5, "Compiling (150/424)"], [0.8, "Compiling (380/424)"], [0.92, "Installing into the private directory"]];
+    steps.forEach(([p, message], i) =>
+      later(400 * (i + 1), () => {
+        if (g.cancelled) return;
+        g.build.message = message;
+        log("info", "gamescope-build", `$ ${message}`);
+        emitTask({ taskId, label, state: "running", progress: p, message });
+      }),
+    );
+    later(400 * (steps.length + 1), () => {
+      if (g.cancelled) return;
+      g.managed = true;
+      g.build = { ...g.build, running: false, state: "done", message: "Installed gamescope-anime4k 863ff3b892", finishedAt: nowS() };
+      log("info", "gamescope-build", "Installed gamescope-anime4k 863ff3b892");
+      emitTask({ taskId, label, state: "done", progress: 1, message: g.build.message });
+    });
+    return taskId;
+  },
+  gamescope_build_cancel: () => {
+    const g = state.gamescope;
+    if (!g.build.running) return false;
+    g.cancelled = true;
+    g.build = { ...g.build, running: false, state: "failed", message: "Build cancelled", finishedAt: nowS() };
+    log("error", "gamescope-build", "Build cancelled");
+    emitTask({ taskId: "gamescope-build", label: "Build gamescope (Anime4K)", state: "failed", progress: null, message: "Build cancelled" });
+    return true;
+  },
+  gamescope_managed_remove: () => {
+    if (state.gamescope.build.running) fail("invalidInput", "A gamescope build is running; cancel it first");
+    state.gamescope.managed = false;
+    return null;
+  },
   diagnostics_dependencies: () => seedDependencies(),
   diagnostics_system: () => seedSystem(),
   diagnostics_prefix_components: ({ prefixPath }) => {

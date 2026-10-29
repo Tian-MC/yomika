@@ -72,6 +72,12 @@ pub fn run() {
             commands::graphics::diagnostics_dependencies,
             commands::graphics::diagnostics_system,
             commands::graphics::diagnostics_prefix_components,
+            // --- gamescope management (orchestrator)
+            commands::gamescope::gamescope_status,
+            commands::gamescope::gamescope_inspect_path,
+            commands::gamescope::gamescope_build_start,
+            commands::gamescope::gamescope_build_cancel,
+            commands::gamescope::gamescope_managed_remove,
             // --- translation (agent 4)
             commands::translation::translation_providers,
             commands::translation::translation_configure_provider,

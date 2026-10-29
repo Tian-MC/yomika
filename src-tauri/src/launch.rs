@@ -51,7 +51,8 @@ pub fn resolve_launch(
     let runner = runtime.resolve_runner(settings.runtime.runner.as_ref(), app_settings.default_runner.as_ref())?;
     let prefix = runtime.resolve_prefix(&game, &settings.runtime.prefix, &runner)?;
     let base = runtime.build_game_command(&game, &settings.runtime, &runner, &prefix)?;
-    let plan = graphics.apply(&settings.graphics, base, &runner)?;
+    let options = vnl_graphics::GraphicsOptions { gamescope_path: app_settings.gamescope_path.clone() };
+    let plan = graphics.apply_with(&settings.graphics, base, &runner, &options)?;
 
     let mut aux = Vec::with_capacity(settings.runtime.auxiliary.len());
     for program in &settings.runtime.auxiliary {

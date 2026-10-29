@@ -1,6 +1,6 @@
 // Graphics / upscaling / dependencies / diagnostics contract. Owned by Agent 5.
 // Rust side: crates/vnl-graphics + src-tauri/src/commands/graphics.rs
-import type { GraphicsConfig } from "./core";
+import type { GraphicsConfig, TaskState } from "./core";
 
 export type DisplaySessionType = "wayland" | "x11" | "unknown";
 
@@ -136,10 +136,87 @@ export interface PrefixComponent {
   detectedBy?: string | null;
 }
 
+export type GamescopeSource = "game" | "custom" | "system" | "managed";
+
+export interface GamescopeBinary {
+  path: string;
+  version: string | null;
+  source: GamescopeSource;
+  /** Values accepted by -F, from `--help`; empty when unknown. */
+  filters: string[];
+  supportsAnime4k: boolean;
+}
+
+export interface BuildRequirement {
+  id: string;
+  name: string;
+  kind: "tool" | "library";
+  found: boolean;
+  detail: string | null;
+}
+
+export interface BuildRequirements {
+  items: BuildRequirement[];
+  missing: string[];
+  /** Package-manager commands (shown, never run by the app). */
+  hints: InstallHint[];
+  ok: boolean;
+}
+
+export interface GamescopeManifest {
+  repo: string;
+  branch: string;
+  commit: string;
+  builtAt: number;
+  version: string | null;
+  filters: string[];
+}
+
+export interface ManagedGamescope {
+  installed: boolean;
+  dir: string;
+  binary: GamescopeBinary | null;
+  manifest: GamescopeManifest | null;
+}
+
+export interface GamescopeBuildStatus {
+  running: boolean;
+  taskId: string | null;
+  state: TaskState | null;
+  message: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  logPath: string | null;
+}
+
+export interface GamescopeStatus {
+  /** Every usable binary: application custom path, system, managed build. */
+  binaries: GamescopeBinary[];
+  anime4kAvailable: boolean;
+  managed: ManagedGamescope;
+  requirements: BuildRequirements;
+  build: GamescopeBuildStatus;
+  repoUrl: string;
+  branch: string;
+  customPath: string | null;
+}
+
+/** Task id of the gamescope build in `vnl://task` events; its output is logged with source "gamescope-build". */
+export const GAMESCOPE_BUILD_TASK = "gamescope-build";
+export const GAMESCOPE_BUILD_LOG_SOURCE = "gamescope-build";
+
 export interface GraphicsCommands {
   graphics_capabilities: { args: Record<string, never>; result: GraphicsCapabilities };
   graphics_preview: { args: { config: GraphicsConfig; runnerId?: string | null }; result: GraphicsPreview };
   graphics_upscaler_info: { args: Record<string, never>; result: UpscalerInfo };
+  gamescope_status: { args: Record<string, never>; result: GamescopeStatus };
+  /** Validate a custom gamescope executable (absolute path). */
+  gamescope_inspect_path: { args: { path: string }; result: GamescopeBinary };
+  /** Optional, user-initiated build of the gamescope-anime4k fork. Returns the task id. */
+  gamescope_build_start: { args: Record<string, never>; result: string };
+  gamescope_build_cancel: { args: Record<string, never>; result: boolean };
+  /** Deletes the managed build only (private directory). */
+  gamescope_managed_remove: { args: Record<string, never>; result: null };
   diagnostics_dependencies: { args: Record<string, never>; result: DependencyStatus[] };
   diagnostics_system: { args: Record<string, never>; result: SystemReport };
   /** Fonts/codecs useful for Japanese VNs and whether they appear installed in the prefix. */

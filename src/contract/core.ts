@@ -186,7 +186,7 @@ export interface RuntimeConfig {
 
 export type WindowMode = "windowed" | "fullscreen" | "borderless";
 export type GamescopeScaler = "auto" | "integer" | "fit" | "fill" | "stretch";
-export type GamescopeFilter = "linear" | "nearest" | "fsr" | "nis" | "pixel" | "sgsr";
+export type GamescopeFilter = "linear" | "nearest" | "fsr" | "nis" | "pixel" | "sgsr" | "anime4k";
 
 export interface GamescopeConfig {
   enabled: boolean;
@@ -205,6 +205,8 @@ export interface GamescopeConfig {
   hdr: boolean;
   /** Send one Alt+Enter so a windowed game switches to its own fullscreen mode (default true). */
   autoFullscreen: boolean;
+  /** Gamescope binary for this game; null = automatic. */
+  binaryPath: string | null;
   extraArgs: string[];
 }
 
@@ -299,6 +301,8 @@ export interface AppSettings {
   translation: TranslationDefaults;
   defaultGraphics: GraphicsConfig;
   vndb: VndbSettings;
+  /** Custom gamescope binary for every game; null = automatic. */
+  gamescopePath: string | null;
 }
 
 // ---------------------------------------------------------------- events

@@ -13,6 +13,21 @@ pub fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     p
 }
 
+/// Fake `gamescope` answering `--version` and `--help` (with the given `-F` filter list).
+pub fn fake_gamescope(dir: &std::path::Path, name: &str, filters: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n--version) echo 'gamescope version 3.17.0 (gcc 16)' >&2;;\n--help) echo 'usage: gamescope [options...] -- [command...]'; echo '  -F, --filter                   upscaler filter ({filters})';;\nesac\n"
+            ),
+        )
+        .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
 /// EDID captured from a real monitor (Samsung Odyssey G40B, 1920x1080@240).
 pub const EDID_G40B: [u8; 128] = [
     0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x4c, 0x2d, 0x78, 0x72, 0x54, 0x5a, 0x4b, 0x30, 0x20, 0x23, 0x01,

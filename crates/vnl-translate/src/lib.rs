@@ -42,7 +42,7 @@ use crate::languages::{ResolvedLanguages, resolve_languages};
 use crate::pipeline::{PipelineConfig, TranslationPipeline};
 use crate::providers::ProviderRegistry;
 use crate::secrets::SecretStore;
-use crate::session::{ActiveSession, DefaultSourceFactory, SourceFactory};
+use crate::session::{ActiveSession, Cancellation, DefaultSourceFactory, InitializationDone, SourceFactory};
 use crate::source::TextEvent;
 use crate::store::TranslationStore;
 use crate::types::{
@@ -88,13 +88,20 @@ type ResolvedTranslation = (Arc<dyn providers::TranslationProvider>, ResolvedLan
 pub const NO_PROVIDER_MESSAGE: &str =
     "No translation provider selected. Choose one in Settings → Translation (or in this game's translation settings).";
 
+struct SessionEntry {
+    cancelled: Arc<Cancellation>,
+    initialized: tokio::sync::watch::Receiver<bool>,
+    active: Option<ActiveSession>,
+}
+
 pub struct TranslationService {
     paths: AppPaths,
     events: Arc<dyn EventSink>,
     store: Arc<TranslationStore>,
     registry: Arc<ProviderRegistry>,
     sources: Arc<dyn SourceFactory>,
-    sessions: tokio::sync::Mutex<HashMap<SessionId, ActiveSession>>,
+    // Entries survive stop so a delayed launch cannot resurrect a finished game.
+    sessions: Mutex<HashMap<SessionId, SessionEntry>>,
     /// Status of the last start attempt, kept after failures/stops.
     last_status: Mutex<HashMap<SessionId, TranslationSessionStatus>>,
 }
@@ -117,7 +124,7 @@ impl TranslationService {
             store,
             registry,
             sources,
-            sessions: tokio::sync::Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
             last_status: Mutex::new(HashMap::new()),
         })
     }
@@ -171,8 +178,23 @@ impl TranslationService {
     /// `config.enabled && config.extraction != Disabled`. Failures are
     /// reported to the user but never abort the game session.
     pub async fn start_session(&self, ctx: SessionContext) -> Result<(), AppError> {
-        self.stop_session(&ctx.session_id).await;
         let session_id = ctx.session_id.clone();
+        let (done_tx, initialized) = tokio::sync::watch::channel(false);
+        let _done = InitializationDone(done_tx);
+        let cancelled = {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(entry) = sessions.get(&session_id) {
+                return if entry.cancelled.is_cancelled() {
+                    Ok(())
+                } else {
+                    Err(AppError::invalid("Text extraction already started for this session"))
+                };
+            }
+            let cancelled = Arc::new(Cancellation::new(false));
+            sessions
+                .insert(session_id.clone(), SessionEntry { cancelled: cancelled.clone(), initialized, active: None });
+            cancelled
+        };
         let mut status = TranslationSessionStatus::inactive(&session_id);
         if !ctx.config.enabled || ctx.config.extraction == vnl_core::ExtractionMode::Disabled {
             status.diagnostics.push(if ctx.config.enabled {
@@ -221,19 +243,53 @@ impl TranslationService {
             self.events.clone(),
             Some(self.store.clone()),
         ));
-        let (active, result) =
-            session::start_sources(&ctx, self.sources.as_ref(), pipeline, &self.ollama_base_url(), diagnostics).await;
+        let (active, result) = session::start_sources(
+            &ctx,
+            self.sources.as_ref(),
+            pipeline,
+            &self.ollama_base_url(),
+            diagnostics,
+            cancelled.clone(),
+        )
+        .await;
         let st = active.status(&session_id);
         for d in &st.diagnostics {
             self.log(LogLevel::Info, Some(&session_id), d.clone());
         }
-        self.last_status.lock().unwrap().insert(session_id.clone(), st);
-        self.sessions.lock().await.insert(session_id, active);
+        // Registration and cancellation share one short critical section. Never
+        // hold it while stopping sources or awaiting their initialization.
+        let mut active = Some(active);
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            if !cancelled.is_cancelled() && result.is_ok() {
+                sessions.get_mut(&session_id).unwrap().active = active.take();
+                self.last_status.lock().unwrap().insert(session_id.clone(), st.clone());
+            }
+        }
+        if let Some(active) = active {
+            active.stop().await;
+            let mut stopped = st;
+            for state in [&mut stopped.hook, &mut stopped.ocr] {
+                if *state != types::TextSourceState::Failed {
+                    *state = types::TextSourceState::Inactive;
+                }
+            }
+            self.last_status.lock().unwrap().insert(session_id, stopped);
+        }
         result
     }
 
     pub async fn stop_session(&self, session_id: &str) {
-        let active = self.sessions.lock().await.remove(session_id);
+        let (active, mut initialized) = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let entry = sessions.entry(session_id.to_string()).or_insert_with(|| SessionEntry {
+                cancelled: Arc::new(Cancellation::new(true)),
+                initialized: tokio::sync::watch::channel(true).1,
+                active: None,
+            });
+            entry.cancelled.cancel();
+            (entry.active.take(), entry.initialized.clone())
+        };
         if let Some(active) = active {
             let mut st = active.status(session_id);
             active.stop().await;
@@ -245,11 +301,17 @@ impl TranslationService {
             st.diagnostics.push("Session stopped.".into());
             self.last_status.lock().unwrap().insert(session_id.to_string(), st);
         }
+        // Pending starts own their partial resources. Cancellation wakes them;
+        // wait for their cleanup, without holding the registry lock.
+        let _ = initialized.wait_for(|done| *done).await;
     }
 
     pub async fn session_status(&self, session_id: &str) -> TranslationSessionStatus {
-        if let Some(active) = self.sessions.lock().await.get(session_id) {
-            return active.status(session_id);
+        {
+            let sessions = self.sessions.lock().unwrap();
+            if let Some(active) = sessions.get(session_id).and_then(|entry| entry.active.as_ref()) {
+                return active.status(session_id);
+            }
         }
         self.last_status
             .lock()

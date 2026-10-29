@@ -16,6 +16,34 @@ use crate::pipeline::TranslationPipeline;
 use crate::source::TextSource;
 use crate::types::{TextSourceState, TranslationSessionStatus};
 
+// Watch retains cancellation even when stop precedes start and wakes pending
+// initialization without polling. Clones all observe the same irreversible flag.
+pub(crate) struct Cancellation(tokio::sync::watch::Sender<bool>);
+
+impl Cancellation {
+    pub fn new(cancelled: bool) -> Self {
+        Self(tokio::sync::watch::channel(cancelled).0)
+    }
+    pub fn cancel(&self) {
+        self.0.send_replace(true);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        *self.0.borrow()
+    }
+    pub async fn cancelled(&self) {
+        let mut rx = self.0.subscribe();
+        let _ = rx.wait_for(|value| *value).await;
+    }
+}
+
+// Signal completion on every return path, including initialization errors.
+pub(crate) struct InitializationDone(pub tokio::sync::watch::Sender<bool>);
+impl Drop for InitializationDone {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
+}
+
 /// Creates text sources; replaceable in tests.
 #[async_trait]
 pub trait SourceFactory: Send + Sync {
@@ -79,13 +107,14 @@ pub(crate) struct ActiveSession {
 
 impl ActiveSession {
     pub async fn stop(self) {
+        self.forward.abort();
+        let _ = self.forward.await;
         if let Some(h) = &self.hook {
             h.stop().await;
         }
         if let Some(o) = &self.ocr {
             o.stop().await;
         }
-        self.forward.abort();
     }
 
     pub fn status(&self, session_id: &str) -> TranslationSessionStatus {
@@ -127,49 +156,93 @@ pub(crate) async fn start_sources(
     pipeline: Arc<TranslationPipeline>,
     ollama_base_url: &str,
     mut diagnostics: Vec<String>,
+    cancelled: Arc<Cancellation>,
 ) -> (ActiveSession, Result<(), AppError>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);
     let mode = ctx.config.extraction;
     let (mut hook, mut ocr, mut hook_error, mut ocr_error) = (None, None, None, None);
 
-    if wants_hook(mode) {
+    if wants_hook(mode) && !cancelled.is_cancelled() {
         match factory.hook(ctx) {
-            Ok(src) => match src.start(tx.clone()).await {
-                Ok(()) => hook = Some(src),
-                Err(e) => {
-                    hook_error = Some(e.message.clone());
-                    hook = Some(src);
+            Ok(src) => {
+                let started = tokio::select! {
+                    biased;
+                    _ = cancelled.cancelled() => None,
+                    result = src.start(tx.clone()) => Some(result),
+                };
+                match started {
+                    Some(Ok(())) => hook = Some(src),
+                    result => {
+                        hook_error = result.and_then(Result::err).map(|e| e.message);
+                        src.stop().await;
+                    }
                 }
-            },
+            }
             Err(e) => hook_error = Some(e.message),
         }
     }
-    if wants_ocr(mode) {
-        match factory.ocr(ctx, ollama_base_url).await {
-            Ok(src) => match src.start(tx.clone()).await {
-                Ok(()) => ocr = Some(src),
-                Err(e) => {
-                    ocr_error = Some(e.message.clone());
-                    ocr = Some(src);
+    if cancelled.is_cancelled()
+        && let Some(src) = hook.take()
+    {
+        src.stop().await;
+    }
+    if wants_ocr(mode) && !cancelled.is_cancelled() {
+        let built = tokio::select! {
+            biased;
+            _ = cancelled.cancelled() => None,
+            result = factory.ocr(ctx, ollama_base_url) => Some(result),
+        };
+        match built {
+            Some(Ok(src)) => {
+                if cancelled.is_cancelled() {
+                    src.stop().await;
+                } else {
+                    let started = tokio::select! {
+                        biased;
+                        _ = cancelled.cancelled() => None,
+                        result = src.start(tx.clone()) => Some(result),
+                    };
+                    match started {
+                        Some(Ok(())) => ocr = Some(src),
+                        result => {
+                            ocr_error = result.and_then(Result::err).map(|e| e.message);
+                            src.stop().await;
+                        }
+                    }
                 }
-            },
-            Err(e) => {
+            }
+            Some(Err(e)) => {
                 ocr_error = Some(format!("{}{}", e.message, e.details.map(|d| format!(" — {d}")).unwrap_or_default()))
             }
+            None => {}
         }
     }
     drop(tx);
 
+    if cancelled.is_cancelled() {
+        for src in [hook.take(), ocr.take()].into_iter().flatten() {
+            src.stop().await;
+        }
+    }
     let forward = tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            if let Some(line) = pipeline.accept(&ev) {
-                let p = pipeline.clone();
-                // Translation runs concurrently so a slow provider never blocks extraction.
-                tokio::spawn(async move {
-                    p.complete(line).await;
-                });
+        // Own provider tasks so stopping extraction also cancels pending work.
+        let mut translations = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancelled.cancelled() => break,
+                ev = rx.recv() => {
+                    let Some(ev) = ev else { break };
+                    if cancelled.is_cancelled() { break; }
+                    if let Some(line) = pipeline.accept(&ev) {
+                        let p = pipeline.clone();
+                        translations.spawn(async move { p.complete(line).await; });
+                    }
+                }
+                Some(_) = translations.join_next(), if !translations.is_empty() => {}
             }
         }
+        while translations.join_next().await.is_some() {}
     });
 
     let requested = wants_hook(mode) as usize + wants_ocr(mode) as usize;

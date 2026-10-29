@@ -49,6 +49,16 @@ export function isActiveSession(s: SessionInfo): boolean {
   return s.state === "starting" || s.state === "running" || s.state === "stopping";
 }
 
+// Session IDs are unique per launch. Command snapshots can arrive after events,
+// so state may only advance within the same ID; terminal states are final.
+const sessionOrder = { starting: 0, running: 1, stopping: 2, exited: 3, failed: 3 } as const;
+function mergeSession(map: Record<string, SessionInfo>, next: SessionInfo): Record<string, SessionInfo> {
+  const current = map[next.id];
+  if (current && (current.gameId !== next.gameId || sessionOrder[next.state] < sessionOrder[current.state]
+    || (!isActiveSession(current) && next.state !== current.state))) return map;
+  return { ...map, [next.id]: next };
+}
+
 // ---------------------------------------------------------------- tasks
 
 interface TasksValue {
@@ -117,7 +127,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   // sessions
   const [sessionMap, setSessionMap] = useState<Record<string, SessionInfo>>({});
-  const upsertSession = useCallback((s: SessionInfo) => setSessionMap((m) => ({ ...m, [s.id]: s })), []);
+  const upsertSession = useCallback((s: SessionInfo) => setSessionMap((m) => mergeSession(m, s)), []);
 
   // tasks
   const [taskMap, setTaskMap] = useState<Record<string, TaskProgress>>({});
@@ -151,7 +161,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setGames((g) => g ?? []);
       });
     call("session_list", {})
-      .then((list) => setSessionMap((m) => Object.fromEntries([...list.map((s) => [s.id, s] as const), ...Object.entries(m)])))
+      .then((list) => setSessionMap((m) => list.reduce(mergeSession, m)))
       .catch(() => undefined);
     call("translation_languages", {})
       .then((l) => setLanguages(l))

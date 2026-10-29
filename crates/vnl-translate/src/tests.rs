@@ -345,3 +345,194 @@ async fn backends_listing() {
     assert_eq!(providers.len(), 4);
     assert!(providers.iter().find(|p| p.id == "deepl").unwrap().sends_data_remotely);
 }
+
+// Gates force stop to happen inside a particular initialization await, without
+// sleeps or scheduler timing assumptions.
+#[derive(Default)]
+struct StartGate {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+struct GatedSource {
+    gate: Option<Arc<StartGate>>,
+    active: AtomicBool,
+    starts: AtomicUsize,
+    stops: AtomicUsize,
+    fail: bool,
+}
+
+impl GatedSource {
+    fn new(gate: Option<Arc<StartGate>>, fail: bool) -> Self {
+        Self { gate, active: AtomicBool::new(false), starts: AtomicUsize::new(0), stops: AtomicUsize::new(0), fail }
+    }
+}
+
+#[async_trait]
+impl TextSource for GatedSource {
+    fn id(&self) -> &str {
+        "gated"
+    }
+    fn origin(&self) -> TextOrigin {
+        TextOrigin::Hook
+    }
+    async fn start(&self, _tx: TextSender) -> Result<(), AppError> {
+        self.starts.fetch_add(1, Ordering::SeqCst);
+        // Simulate resources acquired before start finishes (including errors).
+        self.active.store(true, Ordering::SeqCst);
+        if let Some(gate) = &self.gate {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
+        if self.fail { Err(AppError::invalid("partial initialization failed")) } else { Ok(()) }
+    }
+    async fn stop(&self) {
+        self.stops.fetch_add(1, Ordering::SeqCst);
+        self.active.store(false, Ordering::SeqCst);
+    }
+    fn status(&self) -> SourceStatus {
+        let status = StatusCell::default();
+        status.set_state(if self.active.load(Ordering::SeqCst) {
+            TextSourceState::Active
+        } else {
+            TextSourceState::Inactive
+        });
+        status.get()
+    }
+}
+
+struct GatedFactory {
+    hook: Arc<GatedSource>,
+    ocr: Arc<GatedSource>,
+    ocr_gate: Option<Arc<StartGate>>,
+}
+
+#[async_trait]
+impl SourceFactory for GatedFactory {
+    fn hook(&self, _: &SessionContext) -> Result<Arc<dyn TextSource>, AppError> {
+        Ok(self.hook.clone())
+    }
+    async fn ocr(&self, _: &SessionContext, _: &str) -> Result<Arc<dyn TextSource>, AppError> {
+        if let Some(gate) = &self.ocr_gate {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
+        Ok(self.ocr.clone())
+    }
+}
+
+fn gated_service(factory: Arc<GatedFactory>) -> (tempfile::TempDir, Arc<TranslationService>) {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = AppPaths::under(tmp.path());
+    paths.ensure().unwrap();
+    let svc = TranslationService::with_options(
+        &paths,
+        Arc::new(RecordingSink::new()),
+        ServiceOptions { secrets: Some(Arc::new(MemorySecretStore::default())), sources: Some(factory) },
+    )
+    .unwrap();
+    (tmp, Arc::new(svc))
+}
+
+async fn cancellation_during_start(hook_gate: bool, factory_gate: bool) {
+    let gate = Arc::new(StartGate::default());
+    let factory = Arc::new(GatedFactory {
+        hook: Arc::new(GatedSource::new(hook_gate.then(|| gate.clone()), false)),
+        ocr: Arc::new(GatedSource::new((!hook_gate && !factory_gate).then(|| gate.clone()), false)),
+        ocr_gate: factory_gate.then(|| gate.clone()),
+    });
+    let (_tmp, svc) = gated_service(factory.clone());
+    let starting = {
+        let svc = svc.clone();
+        tokio::spawn(async move { svc.start_session(ctx(ExtractionMode::HookAndOcr, true)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), gate.entered.notified()).await.unwrap();
+    // Stop is nonblocking even while the source/factory owns an unfinished await.
+    tokio::time::timeout(Duration::from_secs(2), svc.stop_session("s1")).await.unwrap();
+    svc.stop_session("s1").await;
+    // Cleanup completes without ever releasing the blocked initialization.
+    assert!(!factory.hook.active.load(Ordering::SeqCst));
+    assert!(!factory.ocr.active.load(Ordering::SeqCst));
+    gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), starting).await.unwrap().unwrap().unwrap();
+    assert!(!factory.hook.active.load(Ordering::SeqCst));
+    assert!(!factory.ocr.active.load(Ordering::SeqCst));
+    assert_eq!(factory.hook.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.ocr.starts.load(Ordering::SeqCst), usize::from(!hook_gate && !factory_gate));
+    assert_eq!(svc.session_status("s1").await.hook, TextSourceState::Inactive);
+    assert_eq!(svc.session_status("s1").await.ocr, TextSourceState::Inactive);
+    assert!(svc.sessions.lock().unwrap().get("s1").unwrap().active.is_none());
+    svc.stop_session("s1").await;
+    // A delayed launch after game exit must not clear the cancellation marker.
+    svc.start_session(ctx(ExtractionMode::HookAndOcr, true)).await.unwrap();
+    assert_eq!(factory.hook.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.hook.stops.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn race_stop_during_hook_start() {
+    cancellation_during_start(true, false).await;
+}
+
+#[tokio::test]
+async fn race_stop_during_ocr_factory() {
+    cancellation_during_start(false, true).await;
+}
+
+#[tokio::test]
+async fn race_stop_during_ocr_start() {
+    cancellation_during_start(false, false).await;
+}
+
+#[tokio::test]
+async fn race_stop_before_start_and_other_session_still_works() {
+    let e = env(Factory::default());
+    e.svc.stop_session("s1").await;
+    e.svc.stop_session("s1").await;
+    e.svc.start_session(ctx(ExtractionMode::Hook, true)).await.unwrap();
+    assert_eq!(e.factory.hook_calls.load(Ordering::SeqCst), 0);
+    let mut other = ctx(ExtractionMode::Hook, true);
+    other.session_id = "s2".into();
+    e.svc.start_session(other).await.unwrap();
+    e.svc.stop_session("s1").await;
+    assert_eq!(e.svc.session_status("s2").await.hook, TextSourceState::Active);
+    e.svc.stop_session("s2").await;
+}
+
+#[tokio::test]
+async fn initialization_error_cleans_partial_source_and_preserves_working_source() {
+    let factory = Arc::new(GatedFactory {
+        hook: Arc::new(GatedSource::new(None, true)),
+        ocr: Arc::new(GatedSource::new(None, false)),
+        ocr_gate: None,
+    });
+    let (_tmp, svc) = gated_service(factory.clone());
+    svc.start_session(ctx(ExtractionMode::HookAndOcr, true)).await.unwrap();
+    assert!(!factory.hook.active.load(Ordering::SeqCst));
+    assert_eq!(factory.hook.stops.load(Ordering::SeqCst), 1);
+    assert!(factory.ocr.active.load(Ordering::SeqCst));
+    assert_eq!(svc.session_status("s1").await.hook, TextSourceState::Failed);
+    svc.stop_session("s1").await;
+    svc.stop_session("s1").await;
+    assert!(!factory.ocr.active.load(Ordering::SeqCst));
+    assert_eq!(factory.ocr.stops.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn initialization_error_cleans_all_failed_sources() {
+    let factory = Arc::new(GatedFactory {
+        hook: Arc::new(GatedSource::new(None, true)),
+        ocr: Arc::new(GatedSource::new(None, true)),
+        ocr_gate: None,
+    });
+    let (_tmp, svc) = gated_service(factory.clone());
+    svc.start_session(ctx(ExtractionMode::HookAndOcr, true)).await.unwrap_err();
+    assert!(!factory.hook.active.load(Ordering::SeqCst));
+    assert!(!factory.ocr.active.load(Ordering::SeqCst));
+    assert!(svc.sessions.lock().unwrap().get("s1").unwrap().active.is_none());
+    let status = svc.session_status("s1").await;
+    assert_eq!((status.hook, status.ocr), (TextSourceState::Failed, TextSourceState::Failed));
+    svc.stop_session("s1").await;
+    assert_eq!(factory.hook.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.ocr.stops.load(Ordering::SeqCst), 1);
+}

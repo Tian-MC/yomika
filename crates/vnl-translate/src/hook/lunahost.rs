@@ -365,12 +365,35 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
     let Some(pid) = find_pid(&ctx, &mut stop).await else { return };
 
     let cwd = ctx.cli.path.parent().map(Path::to_path_buf);
-    let spec = match ctx.prefix.build(&ctx.cli.path, &[], cwd.as_deref()) {
+    let mut spec = match ctx.prefix.build(&ctx.cli.path, &[], cwd.as_deref()) {
         Ok(s) => s,
         Err(e) => return ctx.status.fail(format!("Cannot build the host command: {}", e.message)),
     };
+    let fifo = if spec.program.file_name().is_some_and(|n| n == "umu-run") {
+        let input = match super::stdin::FifoStdin::new(&ctx.prefix.prefix_path(), &ctx.cli.path) {
+            Ok(input) => input,
+            Err(error) => return ctx.status.fail(error.message),
+        };
+        spec = match ctx.prefix.build(
+            input.launcher(),
+            &["/d".into(), "/c".into(), input.command().into()],
+            cwd.as_deref(),
+        ) {
+            Ok(spec) => spec,
+            Err(error) => return ctx.status.fail(format!("Cannot build interactive hook command: {}", error.message)),
+        };
+        if let Some(directory) = &cwd {
+            spec.env.insert("STEAM_COMPAT_INSTALL_PATH".into(), directory.to_string_lossy().into_owned());
+        }
+        spec.env.remove("PRESSURE_VESSEL_DEVEL");
+        spec.env_remove.push("PRESSURE_VESSEL_DEVEL".into());
+        ctx.status.push("Using private stdin reopened inside Wine; no pressure-vessel development mode is needed.");
+        Some(input)
+    } else {
+        None
+    };
     let mut cmd = tokio::process::Command::from(spec.to_std_command());
-    cmd.stdin(std::process::Stdio::piped())
+    cmd.stdin(if fifo.is_some() { std::process::Stdio::null() } else { std::process::Stdio::piped() })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
@@ -383,7 +406,10 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         *ctx.pgid.lock().unwrap() = Some(id as i32);
     }
     ctx.status.push(format!("Started hook host: {}", spec.preview()));
-    let mut stdin = child.stdin.take().expect("piped stdin");
+    let mut stdin: Box<dyn tokio::io::AsyncWrite + Unpin + Send> = match fifo {
+        Some(input) => Box::new(input),
+        None => Box::new(child.stdin.take().expect("piped stdin")),
+    };
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
     let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -451,7 +477,13 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
             return;
         }
     }
-    let _ = tokio::time::timeout(Duration::from_millis(500), stdin.flush()).await;
+    let flushed = tokio::time::timeout(Duration::from_millis(500), stdin.flush()).await;
+    if !matches!(flushed, Ok(Ok(()))) {
+        ctx.status.fail(format!("Cannot flush hook host stdin: {flushed:?}"));
+        drop(stdin);
+        let _ = child.kill().await;
+        return;
+    }
     ctx.status.push(format!(
         "Sent: attach -P{pid}{}",
         ctx.hook_code.as_ref().map(|c| format!(", hook code {c}")).unwrap_or_default()
@@ -961,6 +993,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn umu_host_uses_private_fifo_when_runtime_discards_stdin() {
+        use std::os::unix::fs::PermissionsExt;
+        struct UmuPrefix(PathBuf, bool);
+        impl PrefixCommandBuilder for UmuPrefix {
+            fn build(&self, exe: &Path, args: &[String], cwd: Option<&Path>) -> Result<CommandSpec, AppError> {
+                let program = if self.1 && exe.file_name().is_some_and(|n| n == "cmd.exe") {
+                    self.0.join("missing/umu-run")
+                } else {
+                    self.0.join("umu-run")
+                };
+                let mut spec = CommandSpec::new(program)
+                    .arg(exe.to_string_lossy())
+                    .args(args.to_vec())
+                    .env("PRESSURE_VESSEL_DEVEL", "1");
+                spec.cwd = cwd.map(Path::to_path_buf);
+                Ok(spec)
+            }
+            fn prefix_path(&self) -> PathBuf {
+                self.0.join("pfx")
+            }
+        }
+        let (tmp, mut adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
+        std::fs::create_dir_all(tmp.path().join("pfx/drive_c")).unwrap();
+        let fake_umu = tmp.path().join("umu-run");
+        std::fs::write(
+            &fake_umu,
+            r#"#!/usr/bin/env python3
+import os, pathlib, sys
+root = pathlib.Path(__file__).parent
+os.close(0)
+os.open('/dev/null', os.O_RDONLY)
+if pathlib.Path(sys.argv[1]).name == 'tasklist.exe':
+    sys.stdout.write((root / 'tasklist.out').read_text())
+else:
+    assert pathlib.Path(sys.argv[1]).name == 'cmd.exe'
+    assert 'PRESSURE_VESSEL_DEVEL' not in os.environ
+    command = sys.argv[4]
+    assert command.startswith('LunaHostCLI32.exe < C:')
+    relative = command.split(' < C:', 1)[1].replace('\\', '/').lstrip('/')
+    fifo = root / 'pfx/drive_c' / relative
+    with fifo.open('rb', buffering=0) as source, (root / 'stdin.bin').open('wb') as target:
+        sys.stdout.buffer.write((root / 'host.out').read_bytes())
+        sys.stdout.buffer.flush()
+        while chunk := source.read(64):
+            target.write(chunk)
+            target.flush()
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_umu, std::fs::Permissions::from_mode(0o700)).unwrap();
+        adapter.prefix = Arc::new(UmuPrefix(tmp.path().to_path_buf(), false));
+        adapter.threads.lock().unwrap().selection = Some(vnl_core::HookThreadSelection {
+            name: "GetGlyphOutlineA".into(),
+            hook_code: "HA8@0:gdi32.dll".into(),
+            context: "0".into(),
+            context2: "0".into(),
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        adapter.start(tx).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.unwrap().unwrap();
+        assert_eq!(event.text, "次の行");
+        assert!(adapter.accepts(&event));
+        adapter.stop().await;
+        assert!(!adapter.accepts(&event));
+        let bytes = std::fs::read(tmp.path().join("stdin.bin")).unwrap();
+        let sent = String::from_utf16_lossy(
+            &bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<_>>(),
+        );
+        assert_eq!(sent, "attach -P356\ndetach -P356\n");
+        assert!(std::fs::read_dir(tmp.path().join("pfx/drive_c")).unwrap().next().is_none());
+        let status = adapter.status();
+        assert_eq!(status.state, TextSourceState::Inactive);
+        assert!(status.diagnostics.iter().any(|d| d.contains("private stdin")));
+        assert!(!status.diagnostics.iter().any(|d| d.contains("cleanup timed out")));
+        // A failure after creating the FIFO must leave no private resources.
+        adapter.prefix = Arc::new(UmuPrefix(tmp.path().to_path_buf(), true));
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        adapter.start(tx).await.unwrap();
+        wait_for(&adapter, |s| s.state == TextSourceState::Failed).await;
+        adapter.stop().await;
+        assert!(std::fs::read_dir(tmp.path().join("pfx/drive_c")).unwrap().next().is_none());
+        assert!(adapter.status().diagnostics.iter().any(|d| d.contains("Cannot start")));
+    }
+
+    #[tokio::test]
     async fn unselected_threads_are_previewed_without_forwarding() {
         let (_tmp, adapter) = setup(&host_output(), TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -1130,6 +1247,93 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(500), adapter.stop()).await.unwrap();
         assert!(!tmp.path().join("stdin.bin").exists());
         assert_eq!(adapter.status().state, TextSourceState::Inactive);
+    }
+
+    /// Manual integration check against an already-running game. No provider/UI needed.
+    #[tokio::test]
+    #[ignore = "needs a running VN, installed CLI and YOMIKA_HOOK_TEST_* paths"]
+    async fn live_umu_hook_without_development_mode() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct LivePrefix {
+            prefix: PathBuf,
+            proton: PathBuf,
+            umu: PathBuf,
+            used_fifo: Arc<AtomicBool>,
+        }
+        impl PrefixCommandBuilder for LivePrefix {
+            fn build(&self, exe: &Path, args: &[String], cwd: Option<&Path>) -> Result<CommandSpec, AppError> {
+                if exe.file_name().is_some_and(|n| n == "cmd.exe") {
+                    self.used_fifo.store(true, Ordering::SeqCst);
+                }
+                let mut spec = CommandSpec::new(&self.umu)
+                    .arg(exe.to_string_lossy())
+                    .args(args.to_vec())
+                    .env("WINEPREFIX", self.prefix.to_string_lossy())
+                    .env("PROTONPATH", self.proton.to_string_lossy())
+                    .env("GAMEID", "umu-default")
+                    .env("PROTON_VERB", "runinprefix")
+                    .env("VNL_TRANSLATION_HELPER", "1");
+                spec.env_remove.push("PRESSURE_VESSEL_DEVEL".into());
+                spec.cwd = cwd.map(Path::to_path_buf);
+                Ok(spec)
+            }
+            fn prefix_path(&self) -> PathBuf {
+                self.prefix.clone()
+            }
+        }
+        let path = |name: &str| {
+            PathBuf::from(std::env::var(format!("YOMIKA_HOOK_TEST_{name}")).expect("set the documented test paths"))
+        };
+        let used_fifo = Arc::new(AtomicBool::new(false));
+        let adapter = LunaHostAdapter::new(
+            path("TOOLS"),
+            path("GAME"),
+            Arc::new(LivePrefix {
+                prefix: path("PREFIX"),
+                proton: path("PROTON"),
+                umu: which::which("umu-run").unwrap(),
+                used_fifo: used_fifo.clone(),
+            }),
+            None,
+            LunaHostOptions { process_timeout: Duration::from_secs(30), ..Default::default() },
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        adapter.start(tx).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(90), async {
+            let mut selected = false;
+            let name = std::env::var("YOMIKA_HOOK_TEST_THREAD").ok();
+            loop {
+                let status = adapter.status();
+                if status.state == TextSourceState::Failed {
+                    return Err(format!("{:?}", status.diagnostics));
+                }
+                if !selected
+                    && let Some(thread) =
+                        status.hook_threads.iter().find(|t| name.as_ref().is_none_or(|name| &t.selector.name == name))
+                {
+                    eprintln!("Selecting live thread {} ({})", thread.id, thread.selector.name);
+                    adapter.select_thread(Some(&thread.id)).unwrap();
+                    selected = true;
+                }
+                if let Ok(event) = rx.try_recv() {
+                    assert!(adapter.accepts(&event));
+                    assert!(!event.text.trim().is_empty());
+                    eprintln!("Received {} characters from selected live thread", event.text.chars().count());
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await;
+        adapter.stop().await;
+        assert!(matches!(result, Ok(Ok(()))), "No selected-thread text arrived: {result:?}; {:?}", adapter.status());
+        assert_eq!(adapter.status().state, TextSourceState::Inactive);
+        assert!(used_fifo.load(Ordering::SeqCst), "Expected the private stdin transport");
+        assert!(
+            !adapter.status().diagnostics.iter().any(|d| d.contains("cleanup timed out")),
+            "{:?}",
+            adapter.status()
+        );
     }
 
     #[test]

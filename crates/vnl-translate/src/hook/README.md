@@ -66,6 +66,57 @@ Yomika never applies this repair automatically.
 
 The repaired CLI was tested on Yorikure with GE-Proton 11-11/umu: 15 Japanese
 lines arrived from `EmbedBGI`, and detach exited with 0. This fixes the CLI
-crash; it does not fix pressure-vessel replacing stdin with `/dev/null`.
-`PRESSURE_VESSEL_DEVEL=1` was used only for the diagnostic run, and is not set
-by Yomika or by the repair script.
+crash independently of the stdin transport described below.
+`PRESSURE_VESSEL_DEVEL=1` was used only for that original diagnostic run and
+is not set by Yomika or by the repair script.
+
+
+## Interactive stdin through umu/pressure-vessel
+
+pressure-vessel replaces ordinary stdin with `/dev/null` before starting Proton.
+A CLI reading commands with `getline` therefore sees EOF and exits successfully
+without attaching. This is independent of parsing and the charset crash above.
+
+For hook hosts launched through `umu-run`, Yomika creates a private FIFO in the
+prefix's `drive_c` (directory mode 0700, FIFO mode 0600). It runs the selected
+CLI through Wine's `cmd.exe /d /c`, reopening stdin from that FIFO **inside** the
+container. Only the supported CLI basename and a generated ASCII C: path enter
+the command; user paths never enter cmd syntax. AutoRun is disabled. The CLI
+working directory, runner and prefix are preserved, and stdout/stderr keep their
+ordinary pipes. Wine/Proton direct launches keep their existing stdin pipe.
+
+The helper removes inherited `PRESSURE_VESSEL_DEVEL`; no development mode,
+terminal workaround or change to game launches is needed. Attach, hook-code and
+detach commands still use UTF-16LE with the existing timeouts. Dropping the writer
+sends EOF, and the FIFO/directory are removed on stop, startup error or task
+cancellation. Prefixes must support POSIX FIFOs; preparation failures produce an
+explicit diagnostic and never fall back to disabling runtime protections.
+
+After building, verify through the app with:
+
+```sh
+env -u PRESSURE_VESSEL_DEVEL ./target/release/yomika
+```
+
+Launch the game, advance dialogue and select a text thread. A manual test of the
+same Rust adapter is also available with an already-running game:
+
+```sh
+YOMIKA_HOOK_TEST_GAME=/path/to/Game.exe \
+YOMIKA_HOOK_TEST_PREFIX=/path/to/compat-data \
+YOMIKA_HOOK_TEST_PROTON=/path/to/GE-Proton \
+YOMIKA_HOOK_TEST_TOOLS=/path/to/tools \
+env -u PRESSURE_VESSEL_DEVEL cargo test -p vnl-translate --locked \
+  live_umu_hook_without_development_mode -- --ignored --nocapture
+```
+
+Advance at least two sentences while the test runs. It discovers the Windows
+PID, selects a discovered thread, verifies text reception, then stops the host.
+`YOMIKA_HOOK_TEST_THREAD` optionally chooses the engine/thread name to exercise.
+The test is ignored by default because it needs an actual running VN and CLI.
+
+The FIFO adapter was verified on Yorikure (BGI/x86), GE-Proton 11-11 and umu
+without `PRESSURE_VESSEL_DEVEL`: a discovered `EmbedBGI` thread delivered text,
+then the adapter detached and stopped without a cleanup timeout. The verification
+used the previously repaired GSM CLI; that independent charset-print bug is not
+changed by this stdin transport.

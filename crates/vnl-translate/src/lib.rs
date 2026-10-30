@@ -168,7 +168,7 @@ impl TranslationService {
             .or_else(|| game.and_then(|g| g.provider_id.as_deref()))
             .or_else(|| defaults.and_then(|d| d.provider_id.as_deref()))
             .map(str::trim)
-            .filter(|p| !p.is_empty());
+            .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("none") && !p.eq_ignore_ascii_case("disabled"));
         let Some(provider_id) = provider_id else { return Ok(None) };
         let langs = resolve_languages(source, target, game, defaults)?;
         let provider = self.registry.build(provider_id)?;
@@ -340,6 +340,58 @@ impl TranslationService {
                 .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
         };
         source.select_thread(id)
+    }
+
+    pub async fn select_hook_threads(
+        &self,
+        session_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<vnl_core::HookThreadSelection>, AppError> {
+        let source = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(session_id)
+                .and_then(|e| e.active.as_ref())
+                .and_then(|s| s.hook.clone())
+                .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
+        };
+        source.select_threads(ids)
+    }
+
+    pub async fn hook_insert_code(&self, session_id: &str, code: &str) -> Result<(), AppError> {
+        let source = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(session_id)
+                .and_then(|e| e.active.as_ref())
+                .and_then(|s| s.hook.clone())
+                .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
+        };
+        source.insert_hook_code(code).await
+    }
+
+    pub async fn hook_remove_code(&self, session_id: &str, code: &str) -> Result<(), AppError> {
+        let source = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(session_id)
+                .and_then(|e| e.active.as_ref())
+                .and_then(|s| s.hook.clone())
+                .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
+        };
+        source.remove_hook_code(code).await
+    }
+
+    pub async fn hook_search(&self, session_id: &str) -> Result<(), AppError> {
+        let source = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(session_id)
+                .and_then(|e| e.active.as_ref())
+                .and_then(|s| s.hook.clone())
+                .ok_or_else(|| AppError::not_found("No active hook source for this session"))?
+        };
+        source.search_hooks().await
     }
 
     pub async fn session_status(&self, session_id: &str) -> TranslationSessionStatus {

@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Globe, Languages, RefreshCw, ScanText } from "lucide-react";
+import { Eye, EyeOff, Languages, RefreshCw, ScanText, Search, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { LanguageSelect } from "../../components/pickers";
@@ -29,7 +29,6 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
   const toasts = useToasts();
   const { appSettings } = useAppSettings();
   const { nameFor } = useLanguages();
-  const providers = useCommand("translation_providers", {});
   const hookBackends = useCommand("translation_hook_backends", {});
   const ocrBackends = useCommand("translation_ocr_backends", {});
   const { activeFor } = useSessions();
@@ -43,8 +42,6 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
   const appProviderId = appSettings?.translation.providerId ?? null;
   const effectiveTarget = tr.targetLanguage ?? appTarget;
   const effectiveProviderId = tr.providerId ?? appProviderId;
-  const effectiveProvider = providers.data?.find((p) => p.id === effectiveProviderId);
-  const appProvider = providers.data?.find((p) => p.id === appProviderId);
   const usesHook = tr.extraction === "hook" || tr.extraction === "hookAndOcr";
   const usesOcr = tr.extraction === "ocr" || tr.extraction === "hookAndOcr";
 
@@ -79,23 +76,25 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
           </div>
         </Section>
 
-        <Section title={t("tr.provider")} id="tr-provider">
-          {providers.error && <ErrorState error={providers.error} compact onRetry={() => void providers.reload()} />}
-          <SelectField
-            label={t("tr.provider")}
-            value={tr.providerId ?? ""}
-            onChange={(v) => set({ providerId: v || null })}
-            options={[{ value: "", label: appProvider ? t("tr.useAppDefaultNamed", { name: appProvider.name }) : t("tr.useAppDefaultUnset") }, ...(providers.data ?? []).map((p) => ({ value: p.id, label: providerLabel(p, t) }))]}
-            hint={<Link to="/translation?tab=providers">{t("tr.configureProviders")}</Link>}
-          />
-          {effectiveProvider?.sendsDataRemotely && (
-            <Callout tone="warning" icon={Globe} title={t("provider.remoteTitle")}>
-              {t("provider.remoteText", { name: effectiveProvider.name })}
+        <fieldset
+          disabled
+          style={{ opacity: 0.45, filter: "grayscale(1)", pointerEvents: "none", cursor: "not-allowed" }}
+          className="fieldset stack gap-md"
+          aria-label={t("tr.provider")}
+        >
+          <Section title={t("tr.provider")} id="tr-provider">
+            <Callout tone="neutral" icon={Languages} title={t("tr.translationFeatureDisabled")}>
+              {t("tr.translationFeatureDisabledDesc")}
             </Callout>
-          )}
-          {effectiveProvider && !effectiveProvider.configured && <Callout tone="warning">{t("provider.needsConfig", { name: effectiveProvider.name })}</Callout>}
-          {!effectiveProviderId && providers.data && <Callout tone="info">{t("tr.noProvider")}</Callout>}
-        </Section>
+            <SelectField
+              label={t("tr.provider")}
+              value=""
+              disabled
+              onChange={() => {}}
+              options={[{ value: "", label: t("tr.noProviderChoice") }]}
+            />
+          </Section>
+        </fieldset>
 
         <Section title={t("tr.extraction")} description={t("tr.extractionDesc")} id="tr-extraction">
           <Segmented<ExtractionMode>
@@ -117,6 +116,21 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
                 <SelectField label={t("tr.hookBackend")} value={tr.hook.backend ?? ""} onChange={(v) => set({ hook: { ...tr.hook, backend: v || null } })} options={backendOptions(hookBackends.data, t, t("tr.autoBackend"))} />
                 <OptionalTextField label={t("tr.hookCode")} value={tr.hook.hookCode} onChange={(hookCode) => set({ hook: { ...tr.hook, hookCode } })} placeholder="/HS-8@4A2B0:game.exe" mono hint={t("tr.hookCodeHint")} />
                 <NumberField label={t("tr.attachDelay")} value={tr.hook.attachDelayMs} onChange={(v) => set({ hook: { ...tr.hook, attachDelayMs: v ?? 0 } })} min={0} step={500} suffix="ms" error={errors["translation.hook.attachDelayMs"]} />
+              </div>
+              <div className="grid-2">
+                <SwitchRow
+                  label={t("tr.requireCjk")}
+                  description={t("tr.requireCjkHint")}
+                  checked={tr.hook.filters?.requireCjk ?? false}
+                  onChange={(requireCjk) => set({ hook: { ...tr.hook, filters: { ...(tr.hook.filters ?? { hiddenNames: [], minChars: 0, requireCjk: false }), requireCjk } } })}
+                />
+                <NumberField
+                  label={t("tr.minChars")}
+                  value={tr.hook.filters?.minChars ?? 0}
+                  onChange={(minChars) => set({ hook: { ...tr.hook, filters: { ...(tr.hook.filters ?? { hiddenNames: [], minChars: 0, requireCjk: false }), minChars: Math.max(0, minChars ?? 0) } } })}
+                  min={0}
+                  max={100}
+                />
               </div>
             </div>
           )}
@@ -170,7 +184,7 @@ export function TranslationTab({ game, form }: { game: Game; form: GameSettingsF
           </div>
           <div className="overlay-sample" style={{ fontSize: Math.min(tr.overlay.fontSize, 40), background: `rgba(10, 12, 18, ${tr.overlay.opacity})` }} aria-hidden>
             {tr.overlay.showOriginal && <div className="ov-original" lang="ja">「またここで会ったね」</div>}
-            <div className="ov-translated">{effectiveTarget ? t("tr.overlaySample") : t("tr.chooseTarget")}</div>
+            <div className="ov-translated">{t("tr.noProviderChoice")}</div>
           </div>
         </Section>
       </fieldset>
@@ -201,6 +215,7 @@ function SessionTranslationStatus({ sessionId, gameId, form }: { sessionId: stri
   const toasts = useToasts();
   const status = useCommand("translation_session_status", { sessionId });
   const [capturing, setCapturing] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [last, setLast] = useState<TranslationLine | null>(null);
   const [selecting, setSelecting] = useState(false);
   const mounted = useRef(false);
@@ -245,6 +260,27 @@ function SessionTranslationStatus({ sessionId, gameId, form }: { sessionId: stri
           <Button size="sm" variant="ghost" icon={RefreshCw} onClick={() => void status.reload()}>
             {t("common.refresh")}
           </Button>
+          {status.data?.hook === "active" && (
+            <Button
+              size="sm"
+              icon={Search}
+              loading={searching}
+              onClick={async () => {
+                setSearching(true);
+                try {
+                  await call("translation_hook_search", { sessionId, gameId });
+                  toasts.info(t("tr.hookSearchSuccess"));
+                  await reload();
+                } catch (e) {
+                  toasts.error(e, t("tr.hookSearchFailed"));
+                } finally {
+                  setSearching(false);
+                }
+              }}
+            >
+              {t("tr.hookSearch")}
+            </Button>
+          )}
           <Button
             size="sm"
             icon={ScanText}
@@ -284,8 +320,35 @@ function SessionTranslationStatus({ sessionId, gameId, form }: { sessionId: stri
               {status.data.hookThreads.length === 0 && <p className="muted">{t("tr.noThreads")}</p>}
               {!status.data.selectedHookThread && form.draft?.translation.hook.thread && <p className="muted">{t("tr.waitSavedThread")}</p>}
               {status.data.hookThreads.map((thread) => (
-                <div key={thread.id}>
-                  <code>{thread.id} · {thread.selector.name} · {thread.selector.hookCode}</code>
+                <div key={thread.id} className="stack gap-xs p-xs border-subtle">
+                  <div className="row justify-between items-center wrap gap-xs">
+                    <div className="row gap-xs items-center wrap">
+                      <code>{thread.id} · {thread.selector.name} · {thread.selector.hookCode || "auto"}</code>
+                      {thread.addr && <span className="muted text-xs">@{thread.addr}</span>}
+                      {thread.pid ? <span className="muted text-xs">PID {thread.pid}</span> : null}
+                      {thread.isPreferred && <Badge tone="accent">{t("tr.preferredHook")}</Badge>}
+                      {thread.isFiltered && <Badge tone="warning">Filtered</Badge>}
+                    </div>
+                    {!thread.isPreferred && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={Star}
+                        onClick={() => {
+                          form.setDraft((d) => ({
+                            ...d,
+                            translation: {
+                              ...d.translation,
+                              hook: { ...d.translation.hook, preferred: thread.selector },
+                            },
+                          }));
+                          toasts.info(t("tr.threadSaved"));
+                        }}
+                      >
+                        {t("tr.setPreferred")}
+                      </Button>
+                    )}
+                  </div>
                   <p lang="ja">{thread.preview}</p>
                 </div>
               ))}

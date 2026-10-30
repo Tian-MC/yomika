@@ -188,6 +188,14 @@ pub struct HookThread {
     pub selector: vnl_core::HookThreadSelection,
     pub preview: String,
     pub received: u64,
+    #[serde(default)]
+    pub addr: String,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub is_filtered: bool,
+    #[serde(default)]
+    pub is_preferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

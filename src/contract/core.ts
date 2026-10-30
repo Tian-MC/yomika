@@ -242,11 +242,35 @@ export interface HookThreadSelection {
   context2: string;
 }
 
+export interface HookCodeEntry {
+  code: string;
+  label?: string | null;
+  enabled: boolean;
+}
+
+export interface HookFilters {
+  hiddenNames: string[];
+  minChars: number;
+  requireCjk: boolean;
+}
+
+export interface HookExtraction {
+  codepage?: number | null;
+  flushDelayMs?: number | null;
+  mergeWindowMs: number;
+  repeatGapMs: number;
+}
+
 export interface HookConfig {
   thread: HookThreadSelection | null;
   backend: string | null;
   hookCode: string | null;
   attachDelayMs: number;
+  hookCodes?: HookCodeEntry[];
+  threads?: HookThreadSelection[];
+  preferred?: HookThreadSelection | null;
+  filters?: HookFilters;
+  extraction?: HookExtraction;
 }
 
 export interface CaptureRegion {

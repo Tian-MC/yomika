@@ -165,12 +165,90 @@ pub async fn translation_hook_select_thread(
     let mut settings = state.library.get_settings(game_id)?;
     let previous = state.translation.session_status(&session_id).await.selected_hook_thread;
     let selection = state.translation.select_hook_thread(&session_id, thread_id.as_deref()).await?;
-    settings.translation.hook.thread = selection.clone();
+    settings.translation.hook.set_selected_threads(selection.clone().into_iter().collect());
     if let Err(error) = state.library.save_settings(game_id, &settings) {
         let _ = state.translation.select_hook_thread(&session_id, previous.as_deref()).await;
         return Err(error);
     }
     Ok(selection)
+}
+
+#[tauri::command]
+pub async fn translation_hook_select_threads(
+    state: State<'_, AppState>,
+    session_id: String,
+    game_id: GameId,
+    thread_ids: Vec<String>,
+) -> Result<Vec<vnl_core::HookThreadSelection>, AppError> {
+    let session = state.runtime.session(&session_id).ok_or_else(|| AppError::not_found("Game session not found"))?;
+    if session.game_id != game_id
+        || !matches!(session.state, vnl_core::SessionState::Starting | vnl_core::SessionState::Running)
+    {
+        return Err(AppError::invalid("Thread selection does not belong to an active session of this game"));
+    }
+    let mut settings = state.library.get_settings(game_id)?;
+    let selections = state.translation.select_hook_threads(&session_id, &thread_ids).await?;
+    settings.translation.hook.set_selected_threads(selections.clone());
+    state.library.save_settings(game_id, &settings)?;
+    Ok(selections)
+}
+
+#[tauri::command]
+pub async fn translation_hook_insert_code(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+    game_id: GameId,
+    code: String,
+    label: Option<String>,
+) -> Result<(), AppError> {
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return Err(AppError::invalid("Hook code cannot be empty"));
+    }
+    let mut settings = state.library.get_settings(game_id)?;
+    if !settings.translation.hook.hook_codes.iter().any(|c| c.code == code) {
+        settings.translation.hook.hook_codes.push(vnl_core::HookCodeEntry { code: code.clone(), label, enabled: true });
+        state.library.save_settings(game_id, &settings)?;
+    }
+    if let Some(session_id) = session_id {
+        let _ = state.translation.hook_insert_code(&session_id, &code).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn translation_hook_remove_code(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+    game_id: GameId,
+    code: String,
+) -> Result<(), AppError> {
+    let code = code.trim().to_string();
+    let mut settings = state.library.get_settings(game_id)?;
+    settings.translation.hook.hook_codes.retain(|c| c.code != code);
+    if settings.translation.hook.hook_code.as_deref() == Some(&code) {
+        settings.translation.hook.hook_code = None;
+    }
+    state.library.save_settings(game_id, &settings)?;
+    if let Some(session_id) = session_id {
+        let _ = state.translation.hook_remove_code(&session_id, &code).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn translation_hook_search(
+    state: State<'_, AppState>,
+    session_id: String,
+    game_id: GameId,
+) -> Result<(), AppError> {
+    let session = state.runtime.session(&session_id).ok_or_else(|| AppError::not_found("Game session not found"))?;
+    if session.game_id != game_id
+        || !matches!(session.state, vnl_core::SessionState::Starting | vnl_core::SessionState::Running)
+    {
+        return Err(AppError::invalid("Session does not belong to this game or is not active"));
+    }
+    state.translation.hook_search(&session_id).await
 }
 
 /// Tauri implementation of [`OverlayController`]: a transparent, undecorated,

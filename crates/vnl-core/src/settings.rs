@@ -246,7 +246,7 @@ pub enum ExtractionMode {
 }
 
 /// Stable CLI fingerprint, excluding process IDs, handles and hook addresses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookThreadSelection {
     pub name: String,
@@ -255,15 +255,103 @@ pub struct HookThreadSelection {
     pub context2: String,
 }
 
+/// A user hook code (`H…`, `R…` or `E…`, optionally written with a leading
+/// `/`) stored per game and inserted after attaching.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HookCodeEntry {
+    pub code: String,
+    /// Free-form note shown in the UI.
+    pub label: Option<String>,
+    pub enabled: bool,
+}
+
+impl Default for HookCodeEntry {
+    fn default() -> Self {
+        Self { code: String::new(), label: None, enabled: true }
+    }
+}
+
+/// Per-game filters applied to hook threads and their text.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HookFilters {
+    /// Thread names (case-insensitive, exact) that are flagged as filtered in
+    /// the live list and never auto-selected. They can still be picked by hand.
+    pub hidden_names: Vec<String>,
+    /// Drop text of selected threads shorter than this many characters (0 = off).
+    pub min_chars: u32,
+    /// Drop text of selected threads without any CJK character (kana, kanji, hangul…).
+    pub require_cjk: bool,
+}
+
+/// Per-game extraction settings of the hook host.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HookExtraction {
+    /// Text codepage the host uses for narrow strings (`=<codepage>`, e.g. 932).
+    pub codepage: Option<u32>,
+    /// Host sentence flush delay in milliseconds (`+<ms>`).
+    pub flush_delay_ms: Option<u32>,
+    /// Local fragment merging: a growing text (new text starts with the
+    /// pending one) replaces it instead of being emitted piece by piece, and the
+    /// result is emitted after this many quiet milliseconds (0 = off, emit at once).
+    pub merge_window_ms: u64,
+    /// Identical consecutive text is normally dropped as a duplicate; when
+    /// non-zero, it is accepted again after this many milliseconds (legit repeats).
+    pub repeat_gap_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HookConfig {
     /// Hook backend id, e.g. `"lunahost"`.
     pub backend: Option<String>,
-    /// Optional H-code / hook code.
+    /// Legacy single H-code. Still honored; new code should use [`Self::hook_codes`].
     pub hook_code: Option<String>,
     pub attach_delay_ms: u64,
+    /// Legacy single selected thread; mirrors the first entry of [`Self::threads`].
     pub thread: Option<HookThreadSelection>,
+    /// Hook codes inserted after attaching (in addition to the legacy `hook_code`).
+    pub hook_codes: Vec<HookCodeEntry>,
+    /// Threads forwarded to translation. Empty falls back to the legacy `thread`.
+    pub threads: Vec<HookThreadSelection>,
+    /// Preferred hook: auto-selected by `name` + `hook_code` (contexts ignored)
+    /// when no saved thread matches the current run.
+    pub preferred: Option<HookThreadSelection>,
+    pub filters: HookFilters,
+    pub extraction: HookExtraction,
+}
+
+impl HookConfig {
+    /// Saved thread selection, honoring the legacy single-thread field.
+    pub fn selected_threads(&self) -> Vec<HookThreadSelection> {
+        if self.threads.is_empty() { self.thread.iter().cloned().collect() } else { self.threads.clone() }
+    }
+
+    /// Stores a selection in both the list and the legacy field.
+    pub fn set_selected_threads(&mut self, threads: Vec<HookThreadSelection>) {
+        self.thread = threads.first().cloned();
+        self.threads = threads;
+    }
+
+    /// Effective hook codes: the legacy code first, then the enabled list
+    /// entries, trimmed and without exact duplicates. Not validated.
+    pub fn effective_hook_codes(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let candidates = self
+            .hook_code
+            .iter()
+            .map(String::as_str)
+            .chain(self.hook_codes.iter().filter(|e| e.enabled).map(|e| e.code.as_str()));
+        for code in candidates {
+            let code = code.trim();
+            if !code.is_empty() && !out.iter().any(|c| c == code) {
+                out.push(code.to_string());
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -6,6 +6,7 @@ export interface TabDef<V extends string> {
   label: ReactNode;
   icon?: LucideIcon;
   badge?: ReactNode;
+  disabled?: boolean;
 }
 
 interface TabsProps<V extends string> {
@@ -36,7 +37,7 @@ export function Tabs<V extends string>({ tabs, value, onChange, label, idBase }:
   };
   return (
     <div className="tabs" role="tablist" aria-label={label} onKeyDown={onKey}>
-      {tabs.map(({ value: v, label: l, icon: Icon, badge }) => (
+      {tabs.map(({ value: v, label: l, icon: Icon, badge, disabled }) => (
         <button
           key={v}
           id={`${base}-tab-${v}`}
@@ -44,9 +45,18 @@ export function Tabs<V extends string>({ tabs, value, onChange, label, idBase }:
           role="tab"
           aria-selected={v === value}
           aria-controls={`${base}-panel-${v}`}
-          tabIndex={v === value ? 0 : -1}
-          className={v === value ? "tab is-active" : "tab"}
-          onClick={() => onChange(v)}
+          aria-disabled={disabled}
+          disabled={disabled}
+          style={
+            disabled
+              ? { opacity: 0.45, filter: "grayscale(1)", cursor: "not-allowed", pointerEvents: "none" }
+              : undefined
+          }
+          tabIndex={disabled ? -1 : v === value ? 0 : -1}
+          className={v === value ? "tab is-active" : disabled ? "tab is-disabled" : "tab"}
+          onClick={() => {
+            if (!disabled) onChange(v);
+          }}
         >
           {Icon && <Icon size={15} aria-hidden />}
           <span>{l}</span>

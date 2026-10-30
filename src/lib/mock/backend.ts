@@ -867,6 +867,32 @@ const handlers: Handlers = {
     getSettings(gameId).translation.hook.thread = null;
     return null;
   },
+  translation_hook_select_threads: ({ sessionId, gameId }) => {
+    const session = state.sessions.get(sessionId);
+    if (!session || session.gameId !== gameId || (session.state !== "running" && session.state !== "starting")) fail("invalidInput", "Session is not active");
+    getSettings(gameId).translation.hook.threads = [];
+    return [];
+  },
+  translation_hook_insert_code: ({ gameId, code, label }) => {
+    const hook = getSettings(gameId).translation.hook;
+    hook.hookCodes = hook.hookCodes ?? [];
+    if (!hook.hookCodes.some((c) => c.code === code)) {
+      hook.hookCodes.push({ code, label: label ?? null, enabled: true });
+    }
+    return null;
+  },
+  translation_hook_remove_code: ({ gameId, code }) => {
+    const hook = getSettings(gameId).translation.hook;
+    hook.hookCodes = (hook.hookCodes ?? []).filter((c) => c.code !== code);
+    if (hook.hookCode === code) hook.hookCode = null;
+    return null;
+  },
+  translation_hook_search: ({ sessionId, gameId }) => {
+    const session = state.sessions.get(sessionId);
+    if (!session || session.gameId !== gameId || (session.state !== "running" && session.state !== "starting")) fail("invalidInput", "Session is not active");
+    log("info", "hook", "Hook search started (demo)");
+    return null;
+  },
   overlay_show: ({ config }) => {
     const gameCfg = config ?? defaultGameSettings(state.app).translation.overlay;
     mockEmit("vnl://overlay-config", gameCfg);

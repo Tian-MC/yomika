@@ -100,6 +100,10 @@ export interface HookThread {
   selector: HookThreadSelection;
   preview: string;
   received: number;
+  addr?: string;
+  pid?: number;
+  isFiltered?: boolean;
+  isPreferred?: boolean;
 }
 
 export interface TranslationSessionStatus {
@@ -136,6 +140,10 @@ export interface TranslationCommands {
   translation_ocr_capture: { args: { request: OcrCaptureRequest }; result: TranslationLine };
   translation_hook_backends: { args: Record<string, never>; result: BackendInfo[] };
   translation_hook_select_thread: { args: { sessionId: SessionId; gameId: GameId; threadId: string | null }; result: HookThreadSelection | null };
+  translation_hook_select_threads: { args: { sessionId: SessionId; gameId: GameId; threadIds: string[] }; result: HookThreadSelection[] };
+  translation_hook_insert_code: { args: { sessionId?: SessionId | null; gameId: GameId; code: string; label?: string | null }; result: null };
+  translation_hook_remove_code: { args: { sessionId?: SessionId | null; gameId: GameId; code: string }; result: null };
+  translation_hook_search: { args: { sessionId: SessionId; gameId: GameId }; result: null };
   translation_session_status: { args: { sessionId: SessionId }; result: TranslationSessionStatus };
   /** Creates/shows window "overlay" (index.html#/overlay) and sends OverlayConfig to it via OVERLAY_CONFIG_EVENT. */
   overlay_show: { args: { config?: OverlayConfig | null }; result: null };

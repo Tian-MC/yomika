@@ -106,7 +106,20 @@ export function useGameSettingsForm(gameId: number, game: Game | undefined, onGa
   const setFiles = useCallback((updater: (f: FilesDraft) => FilesDraft) => setFilesState((f) => (f ? updater(f) : f)), []);
 
   const syncHookThread = (thread: HookThreadSelection | null) => {
-    const patch = (value: GameSettings | null) => value ? { ...value, translation: { ...value.translation, hook: { ...value.translation.hook, thread } } } : value;
+    const patch = (value: GameSettings | null) =>
+      value
+        ? {
+            ...value,
+            translation: {
+              ...value.translation,
+              hook: {
+                ...value.translation.hook,
+                thread,
+                threads: thread ? [thread] : [],
+              },
+            },
+          }
+        : value;
     setSaved(patch);
     setDraftState(patch);
   };

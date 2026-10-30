@@ -43,11 +43,14 @@ impl HostSentence {
 pub enum HostMessageKind {
     PipeConnected,
     ProcessConnected(u32),
+    ProcessDisconnected(u32),
     AlreadyInjected,
     ArchitectureMismatch,
     InjectFailed,
     HookFailed,
     InvalidCode,
+    HookSearchStarted,
+    HookSearchFinished(u32),
     Other,
 }
 
@@ -71,12 +74,29 @@ pub fn classify_console(msg: &str) -> HostMessageKind {
         msg.trim().strip_prefix("进程 ").and_then(|s| s.strip_suffix(" 已连接")).and_then(|s| s.trim().parse().ok())
     {
         HostMessageKind::ProcessConnected(pid)
+    } else if let Some(pid) = msg.trim().strip_prefix("Disconnected process ").and_then(|s| s.trim().parse().ok()) {
+        HostMessageKind::ProcessDisconnected(pid)
+    } else if let Some(pid) =
+        msg.trim().strip_prefix("进程 ").and_then(|s| s.strip_suffix(" 已断开连接")).and_then(|s| s.trim().parse().ok())
+    {
+        HostMessageKind::ProcessDisconnected(pid)
     } else if m.contains("pipe connected") || m.contains("管道已连接") {
         HostMessageKind::PipeConnected
     } else if m.contains("failed to insert hook") || m.contains("too many hooks") {
         HostMessageKind::HookFailed
-    } else if m.contains("invalid code") {
+    } else if m.contains("invalid code") || m.contains("特殊码无效") || m.contains("unknown command.") {
         HostMessageKind::InvalidCode
+    } else if m.contains("开始搜索钩子") || m.contains("请点击游戏区域") || m.contains("初始化钩子搜索")
+    {
+        HostMessageKind::HookSearchStarted
+    } else if m.contains("钩子搜索完毕") || m.contains("个结果被找到") {
+        let count = msg
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<u32>().ok())
+            .next_back()
+            .unwrap_or(0);
+        HostMessageKind::HookSearchFinished(count)
     } else {
         HostMessageKind::Other
     }
@@ -103,9 +123,13 @@ pub fn parse_header_line(line: &str) -> Option<HostSentence> {
     let addr = parse_hex::<u64>(parts.next()?)?;
     let ctx = parse_hex::<u64>(parts.next()?)?;
     let ctx2 = parse_hex::<u64>(parts.next()?)?;
-    let tail = parts.next()?; // "name:hookcode] text" or "name] text"
-    let close = tail.find("] ").map(|i| (i, 2)).or_else(|| tail.strip_suffix(']').map(|t| (t.len(), 1)))?;
-    let (head, text) = (&tail[..close.0], &tail[close.0 + close.1..]);
+    let tail = parts.next()?; // "name:hookcode] text" or "name] text" or "name:hookcode]text"
+    let close = tail.find(']')?;
+    let head = &tail[..close];
+    let mut text = &tail[close + 1..];
+    if let Some(rest) = text.strip_prefix(' ') {
+        text = rest;
+    }
     let (name, hook_code) = match head.split_once(':') {
         Some((n, c)) => (n.to_string(), c.to_string()),
         None => (head.to_string(), String::new()),
@@ -245,8 +269,8 @@ pub fn validate_hook_code(code: &str) -> Result<String, String> {
     }
     let body = code.strip_prefix('/').unwrap_or(code);
     match body.chars().next().map(|c| c.to_ascii_uppercase()) {
-        Some('H' | 'R') => Ok(code.to_string()),
-        _ => Err(format!("'{code}' is not a hook code (expected /H… or /R…)")),
+        Some('H' | 'R' | 'E') => Ok(code.to_string()),
+        _ => Err(format!("'{code}' is not a hook code (expected /H…, /R… or /E…)")),
     }
 }
 
@@ -294,14 +318,13 @@ mod tests {
     fn parses_gsm_context_with_the_same_identity_as_legacy() {
         let gsm = format!("[#17|{}", &SAMPLE_FULL[1..]);
         assert_eq!(parse_header_line(&gsm), parse_header_line(SAMPLE_FULL));
-        let sentence =
-            parse_header_line("[#0|0:150:7BE5B820:FFFFFFFFFFFFFFFF:AB:BGI:HS4@0:Yorikure.exe] 台詞").unwrap();
+        let sentence = parse_header_line("[#0|0:150:7BE5B820:FFFFFFFFFFFFFFFF:AB:BGI:HS4@0:Game.exe] 台詞").unwrap();
         assert_eq!(
             (sentence.handle, sentence.pid, sentence.addr, sentence.ctx, sentence.ctx2),
             (0, 336, 0x7BE5B820, u64::MAX, 0xAB)
         );
         assert_eq!(sentence.name, "BGI");
-        assert_eq!(sentence.hook_code, "HS4@0:Yorikure.exe");
+        assert_eq!(sentence.hook_code, "HS4@0:Game.exe");
         for invalid in [
             "[#bad-id|0:150:1:0:0:BGI:H@0] text",
             "[#0:150:1:0:0:BGI:H@0] text",
@@ -313,24 +336,36 @@ mod tests {
     }
 
     #[test]
-    fn parses_verified_yorikure_embed_bgi_thread() {
-        let sentence =
-            parse_header_line("[#0|0:150:7BE5B820:0:1:EmbedBGI:EXHSXN8:20@3B820:Yorikure.exe] テスト台詞").unwrap();
-        assert_eq!(
-            (sentence.handle, sentence.pid, sentence.addr, sentence.ctx, sentence.ctx2),
-            (0, 336, 0x7BE5B820, 0, 1)
-        );
-        assert_eq!(sentence.name, "EmbedBGI");
-        assert_eq!(sentence.hook_code, "EXHSXN8:20@3B820:Yorikure.exe");
-        assert!(!sentence.is_console());
-        assert!(!sentence.is_host_clipboard());
+    fn parses_bgi_and_ethornell_threads_without_game_specific_names() {
+        let samples = [
+            ("[#0|0:150:7BE5B820:0:1:BGI:HS4@0:Game.exe] テスト台詞", "BGI", "HS4@0:Game.exe"),
+            (
+                "[#1|1:150:7BE5B820:0:2:EmbedBGI:EXHSXN8:20@3B820:AnotherGame.exe] テスト台詞",
+                "EmbedBGI",
+                "EXHSXN8:20@3B820:AnotherGame.exe",
+            ),
+            (
+                "[#2|2:150:7BE5B820:0:3:Ethornell:HS4@0:VisualNovel.exe] テスト台詞",
+                "Ethornell",
+                "HS4@0:VisualNovel.exe",
+            ),
+        ];
+
+        for (line, name, hook_code) in samples {
+            let sentence = parse_header_line(line).unwrap();
+            assert_eq!(sentence.name, name);
+            assert_eq!(sentence.hook_code, hook_code);
+            assert_eq!(sentence.text, "テスト台詞");
+            assert!(!sentence.is_console());
+            assert!(!sentence.is_host_clipboard());
+        }
     }
 
     #[test]
     fn gsm_utf16_continuations_and_service_lines_remain_separate() {
         let mut decoder = StreamDecoder::default();
         let mut parser = HostParser::default();
-        let input = "[#0|0:150:7BE5B820:0:AB:BGI:HS4@0:Yorikure.exe] 最初の台詞\r\n続き𠮷\r\n[Console] Connected process 336\r\n[Hook #0 created] Handle: 0\r\n[#1|1:150:7BE5B820:0:CD:BGI:HS4@0:Yorikure.exe] 次の台詞\r\n";
+        let input = "[#0|0:150:7BE5B820:0:AB:BGI:HS4@0:Game.exe] 最初の台詞\r\n続き𠮷\r\n[Console] Connected process 336\r\n[Hook #0 created] Handle: 0\r\n[#1|1:150:7BE5B820:0:CD:BGI:HS4@0:Game.exe] 次の台詞\r\n";
         let mut events = Vec::new();
         for chunk in encode_utf16le(input).chunks(3) {
             for line in decoder.push(chunk) {
@@ -428,6 +463,8 @@ mod tests {
         assert!(validate_hook_code("/HS4@0:game.exe").is_ok());
         assert!(validate_hook_code("HSN4:-14@27A78E:Haharanman.exe").is_ok());
         assert!(validate_hook_code("/RS@44").is_ok());
+        assert!(validate_hook_code("/EB4@1234").is_ok());
+        assert!(validate_hook_code("EB8@4000").is_ok());
         assert!(validate_hook_code("attach").is_err());
         assert!(validate_hook_code("/HS4@0 x").is_err());
         assert!(hook_code_matches("/HSN4:-14@27A78E", "HSN4:-14@27A78E:Haharanman.exe"));
@@ -441,6 +478,10 @@ mod tests {
         assert_eq!(classify_console("Textractor: couldn't inject"), HostMessageKind::InjectFailed);
         assert_eq!(classify_console("Textractor: already injected"), HostMessageKind::AlreadyInjected);
         assert_eq!(classify_console("Textractor: failed to insert hook"), HostMessageKind::HookFailed);
+        assert_eq!(classify_console("进程 1234 已断开连接"), HostMessageKind::ProcessDisconnected(1234));
+        assert_eq!(classify_console("开始搜索钩子"), HostMessageKind::HookSearchStarted);
+        assert_eq!(classify_console("钩子搜索完毕, 找到了 7 条结果"), HostMessageKind::HookSearchFinished(7));
+        assert_eq!(classify_console("[警告] 特殊码无效"), HostMessageKind::InvalidCode);
         assert_eq!(classify_console("hello"), HostMessageKind::Other);
     }
 }

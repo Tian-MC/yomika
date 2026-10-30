@@ -1380,6 +1380,14 @@ details > summary {
 .tab:hover {
   color: var(--text);
 }
+.tab.is-disabled,
+.tab:disabled {
+  opacity: 0.45;
+  filter: grayscale(1);
+  cursor: not-allowed;
+  pointer-events: none;
+  color: var(--text-3);
+}
 .tab.is-active {
   color: var(--text);
 }

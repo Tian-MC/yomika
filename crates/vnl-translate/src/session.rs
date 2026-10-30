@@ -70,7 +70,14 @@ impl SourceFactory for DefaultSourceFactory {
                         ..Default::default()
                     },
                 )
-                .with_thread_selection(ctx.config.hook.thread.clone()),
+                .with_hook_codes(ctx.config.hook.effective_hook_codes())
+                .with_thread_selections(ctx.config.hook.selected_threads())
+                .with_filters(ctx.config.hook.filters.clone())
+                .with_preferred(ctx.config.hook.preferred.clone())
+                .with_auto_select(ctx.config.hook.thread.is_none() && ctx.config.hook.preferred.is_none())
+                .with_codepage(ctx.config.hook.extraction.codepage)
+                .with_flush_delay_ms(ctx.config.hook.extraction.flush_delay_ms)
+                .with_extraction(ctx.config.hook.extraction.clone()),
             )),
             Some(crate::clipboard::BACKEND_ID) => Ok(Arc::new(ClipboardSource::new(Duration::from_millis(400)))),
             Some(other) => {

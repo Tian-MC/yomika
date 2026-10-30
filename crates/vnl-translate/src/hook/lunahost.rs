@@ -40,6 +40,15 @@ use crate::types::{BackendInfo, TextSourceState};
 
 pub const BACKEND_ID: &str = "lunahost";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostCommand {
+    InsertHook(String),
+    RemoveHook(String),
+    SearchHooks,
+    SetCodepage(u32),
+    SetFlushDelay(u32),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliFlavor {
     LunaHost,
@@ -189,10 +198,14 @@ pub struct LunaHostAdapter {
     game_exe: PathBuf,
     prefix: Arc<dyn PrefixCommandBuilder>,
     hook_code: Option<String>,
+    hook_codes: Vec<String>,
+    codepage: Option<u32>,
+    flush_delay_ms: Option<u32>,
     opts: LunaHostOptions,
     status: StatusCell,
     running: Mutex<Option<Running>>,
     threads: Arc<Mutex<ThreadRegistry>>,
+    command_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<HostCommand>>>>,
 }
 
 impl LunaHostAdapter {
@@ -203,25 +216,76 @@ impl LunaHostAdapter {
         hook_code: Option<String>,
         opts: LunaHostOptions,
     ) -> Self {
+        let hook_codes = hook_code.as_ref().filter(|c| !c.trim().is_empty()).into_iter().cloned().collect();
         Self {
             tools_dir,
             game_exe,
             prefix,
             hook_code: hook_code.filter(|c| !c.trim().is_empty()),
+            hook_codes,
+            codepage: None,
+            flush_delay_ms: None,
             opts,
             status: StatusCell::default(),
             running: Mutex::new(None),
             threads: Arc::default(),
+            command_tx: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn with_thread_selection(self, selection: Option<vnl_core::HookThreadSelection>) -> Self {
-        self.threads.lock().unwrap().selection = selection;
+    pub fn with_hook_codes(mut self, codes: Vec<String>) -> Self {
+        self.hook_codes = codes;
         self
     }
 
-    /// Synchronous checks: CLI present, architecture, hook code.
-    pub fn preflight(&self) -> Result<(HostCli, Option<String>), AppError> {
+    pub fn with_codepage(mut self, codepage: Option<u32>) -> Self {
+        self.codepage = codepage;
+        self
+    }
+
+    pub fn with_flush_delay_ms(mut self, delay: Option<u32>) -> Self {
+        self.flush_delay_ms = delay;
+        self
+    }
+
+    pub fn with_thread_selection(self, selection: Option<vnl_core::HookThreadSelection>) -> Self {
+        let mut th = self.threads.lock().unwrap();
+        th.selection = selection.clone();
+        th.selections = selection.into_iter().collect();
+        drop(th);
+        self
+    }
+
+    pub fn with_thread_selections(self, selections: Vec<vnl_core::HookThreadSelection>) -> Self {
+        let mut th = self.threads.lock().unwrap();
+        th.selection = selections.first().cloned();
+        th.selections = selections;
+        drop(th);
+        self
+    }
+
+    pub fn with_filters(self, filters: vnl_core::HookFilters) -> Self {
+        self.threads.lock().unwrap().filters = filters;
+        self
+    }
+
+    pub fn with_preferred(self, preferred: Option<vnl_core::HookThreadSelection>) -> Self {
+        self.threads.lock().unwrap().preferred = preferred;
+        self
+    }
+
+    pub fn with_auto_select(self, auto_select: bool) -> Self {
+        self.threads.lock().unwrap().auto_select = auto_select;
+        self
+    }
+
+    pub fn with_extraction(self, extraction: vnl_core::HookExtraction) -> Self {
+        self.threads.lock().unwrap().extraction = extraction;
+        self
+    }
+
+    /// Synchronous checks: CLI present, architecture, hook codes.
+    pub fn preflight(&self) -> Result<(HostCli, Vec<String>), AppError> {
         let game_arch = match pe_arch(&self.game_exe) {
             Ok(Some(a)) => a,
             Ok(None) => {
@@ -260,11 +324,17 @@ impl LunaHostAdapter {
                 cli.path.display()
             ));
         }
-        let code = match &self.hook_code {
-            Some(c) => Some(validate_hook_code(c).map_err(|e| AppError::invalid(format!("Invalid hook code: {e}")))?),
-            None => None,
-        };
-        Ok((cli, code))
+        let mut codes = Vec::new();
+        if let Some(c) = &self.hook_code {
+            codes.push(validate_hook_code(c).map_err(|e| AppError::invalid(format!("Invalid hook code: {e}")))?);
+        }
+        for c in &self.hook_codes {
+            let valid = validate_hook_code(c).map_err(|e| AppError::invalid(format!("Invalid hook code: {e}")))?;
+            if !codes.contains(&valid) {
+                codes.push(valid);
+            }
+        }
+        Ok((cli, codes))
     }
 }
 
@@ -289,12 +359,15 @@ struct Ctx {
     exe_name: String,
     prefix: Arc<dyn PrefixCommandBuilder>,
     cli: HostCli,
-    hook_code: Option<String>,
+    hook_codes: Vec<String>,
+    codepage: Option<u32>,
+    flush_delay_ms: Option<u32>,
     opts: LunaHostOptions,
     status: StatusCell,
     tx: TextSender,
     pgid: Arc<Mutex<Option<i32>>>,
     threads: Arc<Mutex<ThreadRegistry>>,
+    command_rx: tokio::sync::mpsc::Receiver<HostCommand>,
 }
 
 impl Drop for Ctx {
@@ -355,7 +428,7 @@ async fn find_pid(ctx: &Ctx, stop: &mut oneshot::Receiver<()>) -> Option<u32> {
     None
 }
 
-async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Duration) {
+async fn run_host(mut ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Duration) {
     if !attach_delay.is_zero() {
         tokio::select! {
             _ = tokio::time::sleep(attach_delay) => {}
@@ -454,7 +527,13 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
     }
 
     let mut commands = vec![format!("attach -P{pid}\n")];
-    if let Some(code) = &ctx.hook_code {
+    if let Some(cp) = ctx.codepage {
+        commands.push(format!("={cp} -P{pid}\n"));
+    }
+    if let Some(ms) = ctx.flush_delay_ms {
+        commands.push(format!("+{ms} -P{pid}\n"));
+    }
+    for code in &ctx.hook_codes {
         commands.push(format!("{code} -P{pid}\n"));
     }
     for c in &commands {
@@ -486,7 +565,7 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
     }
     ctx.status.push(format!(
         "Sent: attach -P{pid}{}",
-        ctx.hook_code.as_ref().map(|c| format!(", hook code {c}")).unwrap_or_default()
+        if ctx.hook_codes.is_empty() { String::new() } else { format!(", hook codes: {}", ctx.hook_codes.join(", ")) }
     ));
 
     let mut decoder = StreamDecoder::default();
@@ -516,6 +595,9 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
                         *connected = true;
                         ctx.status.set_state(TextSourceState::Active);
                     }
+                    HostMessageKind::ProcessDisconnected(p) if p == pid => {
+                        ctx.status.push("Target game disconnected from hook host.");
+                    }
                     HostMessageKind::ArchitectureMismatch => ctx.status.fail(format!(
                         "Architecture mismatch reported by the host ({} host used).",
                         ctx.cli.arch.label()
@@ -525,6 +607,14 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
                         .fail("Injection failed. Wine/Proton may block it for this game, or the prefix differs."),
                     HostMessageKind::HookFailed | HostMessageKind::InvalidCode => {
                         ctx.status.push("The hook code was rejected; check it or remove it to use automatic hooks.")
+                    }
+                    HostMessageKind::HookSearchStarted => {
+                        ctx.status.push(
+                            "Hook search started: click the game window or advance dialogue to discover text hooks.",
+                        );
+                    }
+                    HostMessageKind::HookSearchFinished(n) => {
+                        ctx.status.push(format!("Hook search finished: found {n} hook result(s)."));
                     }
                     _ => {}
                 }
@@ -554,6 +644,27 @@ async fn run_host(ctx: Ctx, mut stop: oneshot::Receiver<()>, attach_delay: Durat
         tokio::select! {
             biased;
             _ = &mut stop => { stopped = true; break; }
+            Some(cmd) = ctx.command_rx.recv() => {
+                let cmd_str = match cmd {
+                    HostCommand::InsertHook(code) => {
+                        ctx.status.push(format!("Sending hook code: {code}"));
+                        format!("{code} -P{pid}\n")
+                    }
+                    HostCommand::RemoveHook(code) => {
+                        ctx.status.push(format!("Removing hook: {code}"));
+                        format!("{code} -P{pid}\n")
+                    }
+                    HostCommand::SearchHooks => {
+                        ctx.status.push("Starting hook search (find)... advance dialogue in the game.");
+                        format!("find -P{pid}\n")
+                    }
+                    HostCommand::SetCodepage(cp) => format!("={cp} -P{pid}\n"),
+                    HostCommand::SetFlushDelay(ms) => format!("+{ms} -P{pid}\n"),
+                };
+                let bytes = encode_utf16le(&cmd_str);
+                let _ = stdin.write_all(&bytes).await;
+                let _ = stdin.flush().await;
+            }
             _ = tokio::time::sleep_until(attach_deadline), if !connected && !got_text => {
                 ctx.status.fail("Hook attach timed out: no pipe connection or target-process text. Check the CLI, DLLs and Wine/Proton prefix.");
                 break;
@@ -699,7 +810,7 @@ impl TextSource for LunaHostAdapter {
         self.stop().await;
         self.threads.lock().unwrap().begin();
         self.status.set_state(TextSourceState::Starting);
-        let (cli, hook_code) = match self.preflight() {
+        let (cli, hook_codes) = match self.preflight() {
             Ok(v) => v,
             Err(e) => {
                 self.status.fail(format!(
@@ -718,17 +829,22 @@ impl TextSource for LunaHostAdapter {
             .map(|n| n.to_string_lossy().into_owned())
             .ok_or_else(|| AppError::invalid("game executable path has no file name"))?;
         let (stop_tx, stop_rx) = oneshot::channel();
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(32);
+        *self.command_tx.lock().unwrap() = Some(cmd_tx);
         let pgid = Arc::new(Mutex::new(None));
         let ctx = Ctx {
             exe_name,
             prefix: self.prefix.clone(),
             cli,
-            hook_code,
+            hook_codes,
+            codepage: self.codepage,
+            flush_delay_ms: self.flush_delay_ms,
             opts: self.opts.clone(),
             status: self.status.clone(),
             tx,
             pgid: pgid.clone(),
             threads: self.threads.clone(),
+            command_rx: cmd_rx,
         };
         let task = tokio::spawn(run_host(ctx, stop_rx, self.opts.attach_delay));
         *self.running.lock().unwrap() = Some(Running { stop: stop_tx, task, pgid });
@@ -736,6 +852,7 @@ impl TextSource for LunaHostAdapter {
     }
 
     async fn stop(&self) {
+        *self.command_tx.lock().unwrap() = None;
         self.threads.lock().unwrap().close();
         let running = self.running.lock().unwrap().take();
         if let Some(r) = running {
@@ -765,6 +882,49 @@ impl TextSource for LunaHostAdapter {
 
     fn select_thread(&self, id: Option<&str>) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
         self.threads.lock().unwrap().select(id)
+    }
+
+    fn select_threads(&self, ids: &[String]) -> Result<Vec<vnl_core::HookThreadSelection>, AppError> {
+        self.threads.lock().unwrap().select_multiple(ids)
+    }
+
+    async fn insert_hook_code(&self, code: &str) -> Result<(), AppError> {
+        let code = validate_hook_code(code).map_err(|e| AppError::invalid(format!("Invalid hook code: {e}")))?;
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AppError::invalid("Hook host is not running"))?;
+        tx.send(HostCommand::InsertHook(code)).await.map_err(|_| AppError::internal("Cannot talk to hook host"))?;
+        Ok(())
+    }
+
+    async fn remove_hook_code(&self, code: &str) -> Result<(), AppError> {
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AppError::invalid("Hook host is not running"))?;
+        tx.send(HostCommand::RemoveHook(code.trim().to_string()))
+            .await
+            .map_err(|_| AppError::internal("Cannot talk to hook host"))?;
+        Ok(())
+    }
+
+    async fn search_hooks(&self) -> Result<(), AppError> {
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AppError::invalid("Hook host is not running"))?;
+        tx.send(HostCommand::SearchHooks).await.map_err(|_| AppError::internal("Cannot talk to hook host"))?;
+        Ok(())
     }
 
     fn accepts(&self, event: &TextEvent) -> bool {
@@ -1132,20 +1292,11 @@ else:
     #[tokio::test]
     async fn real_bgi_console_attach_stays_active_and_warns_about_missing_text() {
         // Exercise each confirmation independently: either language must prevent timeout.
-        for confirmation in ["[Console] Connected process 336", "[Console] 进程 336 已连接"] {
+        for confirmation in ["[Console] Connected process 356", "[Console] 进程 356 已连接"] {
             let output = format!(
                 "{confirmation}\r\n[Console] 匹配到 BGI 引擎\r\n[Console] 注入钩子: EmbedBGI 7BE5B820\r\n[Hook #0 created] Handle: 0\r\n"
             );
-            let (tmp, mut adapter) = setup(
-                &output,
-                "\"Yorikure.exe\",\"336\",\"Console\",\"1\",\"9 K\"\n",
-                0x14C,
-                "LunaHostCLI32.exe",
-                0x14C,
-            );
-            let game = tmp.path().join("Yorikure.exe");
-            std::fs::rename(&adapter.game_exe, &game).unwrap();
-            adapter.game_exe = game;
+            let (_tmp, adapter) = setup(&output, TASKLIST, 0x14C, "LunaHostCLI32.exe", 0x14C);
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
             adapter.start(tx).await.unwrap();
             wait_for(&adapter, |s| s.diagnostics.iter().any(|d| d.contains("No text received"))).await;

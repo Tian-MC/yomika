@@ -78,6 +78,18 @@ pub trait TextSource: Send + Sync {
     fn select_thread(&self, _id: Option<&str>) -> Result<Option<vnl_core::HookThreadSelection>, AppError> {
         Err(AppError::invalid("This source does not expose CLI text threads"))
     }
+    fn select_threads(&self, _ids: &[String]) -> Result<Vec<vnl_core::HookThreadSelection>, AppError> {
+        Err(AppError::invalid("This source does not expose CLI text threads"))
+    }
+    async fn insert_hook_code(&self, _code: &str) -> Result<(), AppError> {
+        Err(AppError::invalid("This source does not support inserting hook codes"))
+    }
+    async fn remove_hook_code(&self, _code: &str) -> Result<(), AppError> {
+        Err(AppError::invalid("This source does not support removing hook codes"))
+    }
+    async fn search_hooks(&self) -> Result<(), AppError> {
+        Err(AppError::invalid("This source does not support hook search"))
+    }
     /// Reject queued events after a thread switch or stop.
     fn accepts(&self, _event: &TextEvent) -> bool {
         true

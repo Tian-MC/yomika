@@ -94,6 +94,10 @@ pub fn run() {
             commands::translation::translation_hook_backends,
             commands::translation::translation_session_status,
             commands::translation::translation_hook_select_thread,
+            commands::translation::translation_hook_select_threads,
+            commands::translation::translation_hook_insert_code,
+            commands::translation::translation_hook_remove_code,
+            commands::translation::translation_hook_search,
             commands::translation::overlay_show,
             commands::translation::overlay_hide,
         ])

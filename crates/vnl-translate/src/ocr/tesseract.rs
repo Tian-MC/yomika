@@ -26,6 +26,7 @@ pub fn tesseract_lang(code: Option<&str>, vertical: bool) -> String {
             "zh-hant" | "zh-tw" | "zh-hk" => "chi_tra".into(),
             "ko" => "kor".into(),
             "en" | "en-us" | "en-gb" => "eng".into(),
+            "it" | "it-it" => "ita".into(),
             "fr" => "fra".into(),
             "de" => "deu".into(),
             "es" => "spa".into(),
@@ -154,6 +155,7 @@ mod tests {
     fn lang_mapping() {
         assert_eq!(tesseract_lang(Some("ja"), false), "jpn");
         assert_eq!(tesseract_lang(Some("ja"), true), "jpn_vert");
+        assert_eq!(tesseract_lang(Some("it"), false), "ita");
         assert_eq!(tesseract_lang(Some("zh-Hant"), false), "chi_tra");
         assert_eq!(tesseract_lang(None, false), "jpn");
     }

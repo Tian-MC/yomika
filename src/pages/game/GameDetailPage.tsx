@@ -165,6 +165,7 @@ function GameDetail({ gameId }: { gameId: number }) {
             value: v,
             label: t(`game.tab.${v}`),
             icon: icons[v],
+            disabled: v === "translation",
             badge: tabErrors[v] ? (
               <span className="tab-badge error" aria-label={t("form.errorsInTab", { n: tabErrors[v] ?? 0 })}>
                 {tabErrors[v]}

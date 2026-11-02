@@ -128,10 +128,9 @@ impl Probe {
         if !self.run_commands {
             return None;
         }
-        let mut cmd = Command::new(program);
+        let environment = self.env.iter().map(|(key, value)| (key.into(), value.into()));
+        let mut cmd = vnl_core::process::external_command(program, environment);
         cmd.args(args)
-            .env_clear()
-            .envs(&self.env)
             .env("LC_ALL", "C")
             .env("LANG", "C")
             .stdin(Stdio::null())

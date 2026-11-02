@@ -736,15 +736,10 @@ impl GamescopeBuilder {
         Self::check_cancel(ctx)?;
         let shown = format!("$ {} {}", program.display(), args.join(" "));
         self.log(ctx, LogLevel::Info, &shown);
-        let mut cmd = Command::new(program);
-        cmd.args(args)
-            .current_dir(cwd)
-            .envs(env.iter().cloned())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .process_group(0);
+        let mut spec = vnl_core::CommandSpec::new(program).args(args.iter().copied()).cwd(cwd);
+        spec.env.extend(env.iter().cloned());
+        let mut cmd = Command::from(spec.to_std_command());
+        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true).process_group(0);
         let mut child =
             cmd.spawn().map_err(|e| BuildError::Failed(format!("cannot start {}: {e}", program.display())))?;
         let pid = child.id().unwrap_or(0) as i32;

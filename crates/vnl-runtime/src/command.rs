@@ -51,8 +51,9 @@ impl HostContext {
                 .find(|p| p.join("steamapps").is_dir() || p.join("ubuntu12_32").is_dir())
                 .map(|p| prefixes::canonical(&p))
         });
-        let locales = std::process::Command::new("locale")
+        let locales = vnl_core::CommandSpec::new("locale")
             .arg("-a")
+            .to_std_command()
             .stderr(std::process::Stdio::null())
             .output()
             .ok()

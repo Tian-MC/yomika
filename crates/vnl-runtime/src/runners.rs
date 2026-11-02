@@ -317,9 +317,10 @@ fn read_display_name(dir: &Path) -> Option<String> {
 
 /// Runs `<wine> --version` (does not start a wineserver).
 pub fn wine_version(wine: &Path) -> Option<String> {
-    let out = std::process::Command::new(wine)
+    let out = vnl_core::CommandSpec::new(wine)
         .arg("--version")
         .env("WINEDEBUG", "-all")
+        .to_std_command()
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
